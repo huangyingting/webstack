@@ -73,6 +73,12 @@ resource "azurerm_storage_container" "backups" {
   }
 }
 
+resource "azurerm_storage_container" "imports" {
+  name                  = "db-imports"
+  storage_account_id    = azurerm_storage_account.backups.id
+  container_access_type = "private"
+}
+
 resource "azurerm_storage_management_policy" "backups" {
   storage_account_id = azurerm_storage_account.backups.id
 
@@ -92,6 +98,20 @@ resource "azurerm_storage_management_policy" "backups" {
       }
     }
   }
+
+  rule {
+    name    = "expire-database-imports"
+    enabled = true
+    filters {
+      prefix_match = ["${azurerm_storage_container.imports.name}/"]
+      blob_types   = ["blockBlob"]
+    }
+    actions {
+      base_blob {
+        delete_after_days_since_modification_greater_than = 1
+      }
+    }
+  }
 }
 
 resource "azurerm_user_assigned_identity" "backup" {
@@ -104,6 +124,13 @@ resource "azurerm_user_assigned_identity" "backup" {
 resource "azurerm_role_assignment" "backup" {
   scope                = azurerm_storage_container.backups.id
   role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.backup.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "import_reader" {
+  scope                = azurerm_storage_container.imports.id
+  role_definition_name = "Storage Blob Data Reader"
   principal_id         = azurerm_user_assigned_identity.backup.principal_id
   principal_type       = "ServicePrincipal"
 }
@@ -436,4 +463,12 @@ resource "azurerm_role_assignment" "github" {
   role_definition_id = azurerm_role_definition.github[0].role_definition_resource_id
   principal_id       = azurerm_user_assigned_identity.github[each.key].principal_id
   principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "github_storage" {
+  for_each             = var.github_repositories
+  scope                = azurerm_storage_container.imports.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.github[each.key].principal_id
+  principal_type       = "ServicePrincipal"
 }

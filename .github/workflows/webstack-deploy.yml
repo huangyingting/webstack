@@ -26,7 +26,7 @@ on:
         required: false
         default: ""
       sql_file:
-        description: Repository path to SQL file for injection
+        description: Repository SQL or SQL.GZ path; large files are staged through private Blob Storage
         required: false
         default: ""
       image:
@@ -57,7 +57,7 @@ on:
         required: false
         default: ""
       sql_file:
-        description: SQL path in the caller repository
+        description: SQL or SQL.GZ path in the caller repository
         type: string
         required: false
         default: ""
@@ -137,6 +137,15 @@ jobs:
           [[ -n "$RESOURCE_GROUP" && -n "$VM_NAME" ]]
           EXPECTED_MARKER=""
           SQL_PATH=""
+          BLOB_NAME=""
+          BLOB_SHA256=""
+          STORAGE_ACCOUNT=""
+          STORAGE_CONTAINER=""
+          TRANSFER_KEY=""
+          TRANSFER_MARKER=""
+          SSH_TARGET=""
+          SSH_PORT=""
+          HOSTS_MARKER=""
           case "$MODE" in
             provision-db)
               [[ -n "$DB_NAME" && -n "$DB_USER" && -n "$DB_PASSWORD" ]] || {
@@ -182,16 +191,182 @@ jobs:
               echo "sql_file must be a regular file inside the checked-out repository" >&2
               exit 1
             }
+            [[ "$SQL_PATH" == *.sql || "$SQL_PATH" == *.sql.gz ]] || {
+              echo "sql_file must end in .sql or .sql.gz" >&2
+              exit 1
+            }
           fi
 
-          python3 - "$RUNNER_TEMP/webstack-ops.sh" "$SQL_PATH" <<'PY'
+          cleanup() {
+            local cleanup_script
+            set +e
+            if [[ -n "$BLOB_NAME" && -n "$STORAGE_ACCOUNT" && -n "$STORAGE_CONTAINER" \
+                && -n "$SSH_TARGET" ]]; then
+              az storage blob delete --auth-mode login \
+                --account-name "$STORAGE_ACCOUNT" \
+                --container-name "$STORAGE_CONTAINER" \
+                --name "$BLOB_NAME" --only-show-errors
+            fi
+            if [[ -n "$SSH_TARGET" ]]; then
+              sudo ssh -S "$RUNNER_TEMP/tunnel-control" -O exit "$SSH_TARGET" 2>/dev/null
+              sudo rm -f -- "$RUNNER_TEMP/tunnel-control"
+            fi
+            if [[ -n "$HOSTS_MARKER" ]]; then
+              sudo sed -i "\|$HOSTS_MARKER|d" /etc/hosts
+            fi
+            if [[ -n "$TRANSFER_MARKER" ]]; then
+              printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nmarker=%q\n' \
+                "$TRANSFER_MARKER" > "$RUNNER_TEMP/cleanup-transfer.sh"
+              cat >> "$RUNNER_TEMP/cleanup-transfer.sh" <<'SH'
+          python3 - "$marker" <<'PY'
+          from pathlib import Path
+          import os
+          import pwd
+          import sys
+
+          suffix = " " + sys.argv[1]
+          for path in Path("/home").glob("*/.ssh/authorized_keys"):
+              lines = path.read_text().splitlines()
+              updated = [line for line in lines if not line.endswith(suffix)]
+              if updated != lines:
+                  path.write_text("".join(line + "\n" for line in updated))
+                  user = pwd.getpwnam(path.parts[2])
+                  os.chown(path, user.pw_uid, user.pw_gid)
+                  path.chmod(0o600)
+          PY
+          SH
+              az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" \
+                --command-id RunShellScript --scripts @"$RUNNER_TEMP/cleanup-transfer.sh" \
+                --only-show-errors --output none
+            fi
+            rm -f -- "$TRANSFER_KEY" "$TRANSFER_KEY.pub" \
+              "$RUNNER_TEMP/staged-import.sql.gz"
+          }
+          trap cleanup EXIT
+
+          if [[ -n "$SQL_PATH" && $(wc -c < "$SQL_PATH") -gt 65536 ]]; then
+            TRANSFER_KEY="$RUNNER_TEMP/webstack-transfer"
+            TRANSFER_MARKER="webstack-import-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            HOSTS_MARKER="# $TRANSFER_MARKER"
+            ssh-keygen -q -t ed25519 -N "" -C "$TRANSFER_MARKER" -f "$TRANSFER_KEY"
+            transfer_public_key="$(cut -d ' ' -f 1,2 "$TRANSFER_KEY.pub")"
+            printf '#!/usr/bin/env bash\nset -Eeuo pipefail\nkey=%q\nmarker=%q\n' \
+              "$transfer_public_key" "$TRANSFER_MARKER" > "$RUNNER_TEMP/setup-transfer.sh"
+            cat >> "$RUNNER_TEMP/setup-transfer.sh" <<'SH'
+          config=/etc/webstack/config.json
+          readarray -t values < <(python3 - "$config" <<'PY'
+          import json, sys
+          config = json.load(open(sys.argv[1]))
+          for name in ("storage_account", "admin_username", "ssh_port"):
+              print(config[name])
+          PY
+          )
+          account=${values[0]}
+          admin=${values[1]}
+          port=${values[2]}
+          home=$(getent passwd "$admin" | cut -d: -f6)
+          [[ -n "$home" && "$home" == /home/* ]]
+          install -d -m 0700 -o "$admin" -g "$admin" "$home/.ssh"
+          touch "$home/.ssh/authorized_keys"
+          chown "$admin:$admin" "$home/.ssh/authorized_keys"
+          chmod 0600 "$home/.ssh/authorized_keys"
+          grep -Fq " $marker" "$home/.ssh/authorized_keys" \
+            || printf '%s %s\n' "$key" "$marker" >> "$home/.ssh/authorized_keys"
+          public_ip=$(curl -fsS -H Metadata:true \
+            'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text')
+          printf 'WEBSTACK_TRANSFER account %s\n' "$account"
+          printf 'WEBSTACK_TRANSFER container db-imports\n'
+          printf 'WEBSTACK_TRANSFER user %s\n' "$admin"
+          printf 'WEBSTACK_TRANSFER port %s\n' "$port"
+          printf 'WEBSTACK_TRANSFER ip %s\n' "$public_ip"
+          printf 'WEBSTACK_TRANSFER hostkey %s\n' "$(cat /etc/ssh/ssh_host_ed25519_key.pub)"
+          SH
+            az vm run-command invoke --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" \
+              --command-id RunShellScript --scripts @"$RUNNER_TEMP/setup-transfer.sh" \
+              --only-show-errors --output json > "$RUNNER_TEMP/transfer-result.json"
+            python3 - "$RUNNER_TEMP/transfer-result.json" "$RUNNER_TEMP/transfer.json" <<'PY'
+          import ipaddress
+          import json
+          import re
+          import sys
+
+          result = json.load(open(sys.argv[1]))
+          messages = "\n".join(item.get("message", "") for item in result.get("value", []))
+          values = {}
+          for line in messages.splitlines():
+              if line.startswith("WEBSTACK_TRANSFER "):
+                  _, _, name, value = line.split(" ", 3)
+                  values[name] = value
+          required = {"account", "container", "user", "port", "ip", "hostkey"}
+          if values.keys() < required:
+              raise SystemExit("VM did not return complete private transfer information")
+          if not re.fullmatch(r"[a-z0-9]{3,24}", values["account"]):
+              raise SystemExit("VM returned an invalid storage account")
+          if values["container"] != "db-imports":
+              raise SystemExit("VM returned an invalid import container")
+          if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", values["user"]):
+              raise SystemExit("VM returned an invalid SSH user")
+          if not 1024 <= int(values["port"]) <= 65535:
+              raise SystemExit("VM returned an invalid SSH port")
+          ipaddress.ip_address(values["ip"])
+          if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+(?: .*)?", values["hostkey"]):
+              raise SystemExit("VM returned an invalid SSH host key")
+          json.dump(values, open(sys.argv[2], "w"))
+          PY
+            readarray -t transfer < <(python3 - "$RUNNER_TEMP/transfer.json" <<'PY'
+          import json, sys
+          values = json.load(open(sys.argv[1]))
+          for name in ("account", "container", "user", "port", "ip", "hostkey"):
+              print(values[name])
+          PY
+          )
+            STORAGE_ACCOUNT=${transfer[0]}
+            STORAGE_CONTAINER=${transfer[1]}
+            ssh_user=${transfer[2]}
+            ssh_port=${transfer[3]}
+            ssh_ip=${transfer[4]}
+            read -r host_key_type host_key_value _ <<< "${transfer[5]}"
+            printf '[%s]:%s %s %s\n' "$ssh_ip" "$ssh_port" \
+              "$host_key_type" "$host_key_value" > "$RUNNER_TEMP/known_hosts"
+            printf '127.0.0.1 %s.blob.core.windows.net %s\n' \
+              "$STORAGE_ACCOUNT" "$HOSTS_MARKER" | sudo tee -a /etc/hosts >/dev/null
+            SSH_TARGET="$ssh_user@$ssh_ip"
+            SSH_PORT="$ssh_port"
+            sudo ssh -M -S "$RUNNER_TEMP/tunnel-control" -fN \
+              -i "$TRANSFER_KEY" -p "$SSH_PORT" \
+              -o BatchMode=yes -o ExitOnForwardFailure=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+              -L "443:${STORAGE_ACCOUNT}.blob.core.windows.net:443" \
+              "$SSH_TARGET"
+            (exec 3<>/dev/tcp/127.0.0.1/443) 2>/dev/null || {
+              echo "Private Blob SSH tunnel did not become ready" >&2
+              exit 1
+            }
+            if [[ "$SQL_PATH" == *.gz ]]; then
+              cp -- "$SQL_PATH" "$RUNNER_TEMP/staged-import.sql.gz"
+            else
+              gzip -c -- "$SQL_PATH" > "$RUNNER_TEMP/staged-import.sql.gz"
+            fi
+            BLOB_SHA256="$(sha256sum "$RUNNER_TEMP/staged-import.sql.gz" | cut -d ' ' -f1)"
+            BLOB_NAME="imports/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/seed.sql.gz"
+            az storage blob upload --auth-mode login \
+              --account-name "$STORAGE_ACCOUNT" \
+              --container-name "$STORAGE_CONTAINER" \
+              --name "$BLOB_NAME" \
+              --file "$RUNNER_TEMP/staged-import.sql.gz" \
+              --overwrite true --only-show-errors
+          fi
+
+          python3 - "$RUNNER_TEMP/webstack-ops.sh" "$SQL_PATH" "$BLOB_NAME" \
+            "$BLOB_SHA256" "$STORAGE_ACCOUNT" "$STORAGE_CONTAINER" <<'PY'
           import base64
           import os
           from pathlib import Path
           import shlex
           import sys
 
-          output, sql_path = sys.argv[1:]
+          output, sql_path, blob_name, blob_sha256, storage_account, storage_container = sys.argv[1:]
           mode = os.environ["MODE"]
           app = os.environ["APP_NAME"]
           image = os.environ["IMAGE"]
@@ -201,14 +376,15 @@ jobs:
           def quote(value):
               return shlex.quote(value)
 
+          compressed = sql_path.endswith(".gz")
           lines = [
               "#!/usr/bin/env bash",
               "set -Eeuo pipefail",
               "umask 077",
-              "seed=/tmp/webstack-seed-$$.sql",
+              f"seed=/tmp/webstack-seed-$$.sql{'.gz' if compressed else ''}",
               "trap 'rm -f -- \"$seed\"' EXIT",
           ]
-          if sql_path:
+          if sql_path and not blob_name:
               encoded = base64.b64encode(Path(sql_path).read_bytes()).decode()
               lines.append(f"printf %s {quote(encoded)} | base64 -d > \"$seed\"")
           if mode in ("provision-db", "full-deploy"):
@@ -217,10 +393,17 @@ jobs:
                   f"provision --db {quote(database)} --user {quote(user)}"
               )
           if mode in ("inject-data", "full-deploy"):
-              lines.append(
-                  f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
-                  '--sql-file "$seed"'
-              )
+              if blob_name:
+                  lines.append(
+                      f"/usr/local/sbin/webstack-db inject-blob --db {quote(database)} "
+                      f"--account {quote(storage_account)} --container {quote(storage_container)} "
+                      f"--blob {quote(blob_name)} --sha256 {quote(blob_sha256)}"
+                  )
+              else:
+                  lines.append(
+                      f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
+                      '--sql-file "$seed"'
+                  )
           if mode in ("deploy-webapp", "full-deploy"):
               lines.append(
                   f"/usr/local/sbin/webstack-db deploy --app {quote(app)} --image {quote(image)}"
@@ -231,13 +414,35 @@ jobs:
           PY
           chmod 0700 "$RUNNER_TEMP/webstack-ops.sh"
 
-          az vm run-command invoke \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$VM_NAME" \
-            --command-id RunShellScript \
-            --scripts @"$RUNNER_TEMP/webstack-ops.sh" \
-            --output json > "$RUNNER_TEMP/result.json"
-          python3 - "$RUNNER_TEMP/result.json" "$EXPECTED_MARKER" <<'PY'
+          if [[ -n "$BLOB_NAME" ]]; then
+            sudo ssh -S "$RUNNER_TEMP/tunnel-control" "$SSH_TARGET" \
+              'sudo -n bash -s' < "$RUNNER_TEMP/webstack-ops.sh" \
+              | tee "$RUNNER_TEMP/remote-output.txt"
+          else
+            az vm run-command invoke \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$VM_NAME" \
+              --command-id RunShellScript \
+              --scripts @"$RUNNER_TEMP/webstack-ops.sh" \
+              --output json > "$RUNNER_TEMP/result.json"
+          fi
+
+          if [[ -n "$BLOB_NAME" ]]; then
+            az storage blob delete \
+              --auth-mode login \
+              --account-name "$STORAGE_ACCOUNT" \
+              --container-name "$STORAGE_CONTAINER" \
+              --name "$BLOB_NAME" \
+              --only-show-errors
+            BLOB_NAME=""
+          fi
+          if [[ -f "$RUNNER_TEMP/remote-output.txt" ]]; then
+            grep -Fxq "$EXPECTED_MARKER" "$RUNNER_TEMP/remote-output.txt" || {
+              echo "Remote operation did not complete: missing '$EXPECTED_MARKER'" >&2
+              exit 1
+            }
+          else
+            python3 - "$RUNNER_TEMP/result.json" "$EXPECTED_MARKER" <<'PY'
           import json, sys
           result = json.load(open(sys.argv[1]))
           messages = "\n".join(item.get("message", "") for item in result.get("value", []))
@@ -245,3 +450,4 @@ jobs:
           if sys.argv[2] not in messages.splitlines():
               raise SystemExit(f"Remote operation did not complete: missing {sys.argv[2]!r}")
           PY
+          fi

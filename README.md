@@ -155,7 +155,18 @@ jobs:
 `provision-db` 或 `full-deploy` 时，还必须配置至少 16 字符的
 `DATABASE_PASSWORD` Environment secret；密码不是普通 workflow input，不会显示在
 人工触发表单中。`inject-data` 和 `full-deploy` 的 `sql_file` 必须指向调用仓库内的
-普通 SQL 文件，SQL 以目标数据库 owner 身份执行。`deploy-webapp` 只调用容器部署
+普通 `.sql` 或 `.sql.gz` 文件，SQL 以目标数据库 owner 身份执行。
+不超过 64 KiB 的文件随 Run Command 传输；更大的文件会自动压缩并上传到专用私有
+Blob 容器 `db-imports`。存储账号保持 `public_network_access_enabled = false`：
+workflow 通过 Azure Run Command 临时安装一次性 SSH 公钥、校验 VM 的 SSH host key，
+再经 VM 建立到 Blob 私有端点的隧道。GitHub OIDC 身份只能写入 import 容器，VM
+托管身份只能读取它。VM 下载后先核对 SHA-256，再开始导入；成功或失败都会尝试删除
+临时 Blob 和 SSH 公钥，生命周期策略会在 1 天后清理遗留 Blob。
+
+大型导入不会受 Azure Run Command 的执行时限限制，实际数据库导入通过已建立的
+SSH 控制连接执行。GitHub runner 必须能连接 VM 的 `ssh_port`；如果将
+`admin_cidr` 收紧到固定办公地址，大型导入会被 NSG 阻止，需要改用能访问该端口的
+self-hosted runner。`deploy-webapp` 只调用容器部署
 helper，不执行 SQL、不重启 PostgreSQL。应用目录和 `app.env` 仍需先通过
 `webstack-create-app` 或等效配置创建，并使用与 secret 相同的数据库凭据。
 `full-deploy` 用于首次部署；重复数据注入是否安全由 SQL 文件本身决定。

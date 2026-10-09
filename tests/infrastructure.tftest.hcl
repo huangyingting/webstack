@@ -63,9 +63,25 @@ run "infrastructure_contract" {
   assert {
     condition = alltrue([
       for rule in azurerm_storage_management_policy.backups.rule :
-      rule.actions[0].base_blob[0].delete_after_days_since_modification_greater_than == (rule.name == "expire-daily" ? 7 : 112)
+      rule.actions[0].base_blob[0].delete_after_days_since_modification_greater_than == (
+        rule.name == "expire-daily" ? 7 :
+        rule.name == "expire-weekly" ? 112 :
+        rule.name == "expire-database-imports" ? 1 : 0
+      )
     ])
-    error_message = "Daily and weekly lifecycle expiry must be 7 and 112 days."
+    error_message = "Daily, weekly and import lifecycle expiry must be 7, 112 and 1 day."
+  }
+  assert {
+    condition = (
+      azurerm_storage_account.backups.public_network_access_enabled == false &&
+      azurerm_storage_container.imports.container_access_type == "private" &&
+      azurerm_role_assignment.import_reader.role_definition_name == "Storage Blob Data Reader" &&
+      alltrue([
+        for assignment in azurerm_role_assignment.github_storage :
+        assignment.role_definition_name == "Storage Blob Data Contributor"
+      ])
+    )
+    error_message = "Large imports must use the private import container with least-privilege identities."
   }
   assert {
     condition     = length(azurerm_user_assigned_identity.github) == 2

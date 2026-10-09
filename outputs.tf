@@ -7,6 +7,8 @@ output "deployment" {
     BACKUP_RESOURCE_GROUP  = azurerm_resource_group.backups.name
     BACKUP_STORAGE_ACCOUNT = azurerm_storage_account.backups.name
     BACKUP_CONTAINER       = azurerm_storage_container.backups.name
+    IMPORT_STORAGE_ACCOUNT = azurerm_storage_account.backups.name
+    IMPORT_CONTAINER       = azurerm_storage_container.imports.name
     PUBLIC_IP              = azurerm_public_ip.apps.ip_address
     SSH_USER               = var.admin_username
     SSH_PORT               = var.ssh_port

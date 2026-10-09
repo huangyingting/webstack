@@ -19,6 +19,13 @@ grep -q "<<'SQL'" db-ops.sh
 grep -q 'WEBSTACK_DB_PROVISION_OK' db-ops.sh
 grep -q 'WEBSTACK_DB_INJECT_OK' db-ops.sh
 grep -q 'Refusing to modify the postgres role' db-ops.sh
+grep -q 'inject-blob)' db-ops.sh
+grep -q 'Import SHA-256 mismatch' db-ops.sh
+grep -q 'Blob download failed with HTTP' db-ops.sh
+grep -q 'preserving a 1 GiB reserve' db-ops.sh
+grep -q 'public_network_access_enabled   = false' main.tf
+grep -A3 'resource "azurerm_role_assignment" "github_storage"' main.tf \
+    | grep -q 'scope.*azurerm_storage_container.imports.id'
 assert_rejected() {
     local expected=$1
     shift
@@ -82,6 +89,13 @@ assert deploy["steps"][0]["uses"].startswith("actions/checkout@")
 run_script = deploy["steps"][-1]["run"]
 assert 'EXPECTED_MARKER="WEBSTACK_FULL_DEPLOY_OK $APP_NAME"' in run_script
 assert "messages.splitlines()" in run_script
+assert "generate-sas" not in run_script
+assert "sql_blob_url" not in run_script
+assert "StrictHostKeyChecking=yes" in run_script
+assert "WEBSTACK_TRANSFER hostkey" in run_script
+assert "az storage blob upload --auth-mode login" in run_script
+assert "/usr/local/sbin/webstack-db inject-blob" in run_script
+assert 'BLOB_SHA256="$(sha256sum' in run_script
 generator = run_script[run_script.index('if mode in ("provision-db", "full-deploy"):'):]
 assert generator.index("/usr/local/sbin/webstack-db inject") < generator.index(
     "/usr/local/sbin/webstack-db deploy"
