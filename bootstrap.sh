@@ -72,6 +72,7 @@ printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.do
     "$(dpkg --print-architecture)" "$VERSION_CODENAME" > /etc/apt/sources.list.d/docker.list
 apt-get update -qq
 apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+usermod -aG docker "$admin_username"
 
 caddy_version=2.11.7
 caddy_package="caddy_${caddy_version}_linux_amd64.deb"

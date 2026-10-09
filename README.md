@@ -60,6 +60,9 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 ssh -p 22222 azadmin@PUBLIC_IP
 ```
 
+`azadmin` 默认属于 `docker` 组，可直接运行 Docker 命令；重新登录 SSH
+后组权限才会生效。
+
 同一 NSG 同时关联到应用子网和 VM NIC；两层都开放公网 HTTP `80`、HTTPS `443`
 以及 `admin_cidr` 指定的 SSH `22222`，其他入站流量显式拒绝。当前配置使用
 `0.0.0.0/0`，因此 SSH `22222` 对所有 IPv4 地址开放；生产环境建议改回固定 `/32`。
@@ -127,7 +130,41 @@ helper 使用每应用部署锁，先拉镜像，再更新该应用；失败时�
 
 流程为：GitHub runner 构建 amd64 镜像 → 推送 GHCR（commit SHA 标签）→ OIDC 登录 Azure → Run Command 更新应用。**不用开放 GitHub runner 的 SSH IP，也不用长期 Azure 密钥。**
 
-对于私有 GHCR 镜像，需要在 VM 上以 root 进行一次 `docker login ghcr.io`：使用有对应包读取权限的账号及 `read:packages` token；不要把 token 放进 Terraform、Run Command 脚本或 GitHub 仓库。Docker 默认凭据文件不是加密保险箱，应保护它，必要时使用 credential helper。公开镜像不需要这一步。
+GitHub Action 也支持人工触发的数据库与应用生命周期操作：
+
+- `provision-db`：首次创建数据库和应用角色，确保数据库存在且有可登录用户；只在需要时执行。
+- `inject-data`：在目标数据库中执行 SQL 初始化或数据导入脚本；适合新环境初始化。
+- `deploy-webapp`：只更新指定应用的容器镜像；不会重启数据库，也不会执行任何数据库迁移。
+- `full-deploy`：按需执行 `provision-db` → `inject-data` → `deploy-webapp`，适合第一次上架或回滚前重新初始化。
+
+仓库内的 `.github/workflows/webstack-deploy.yml` 同时支持 `workflow_dispatch`
+和 `workflow_call`。其他应用仓库可以直接调用：
+
+```yaml
+jobs:
+  deploy:
+    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@main
+    with:
+      mode: deploy-webapp
+      app_name: app_a
+      # 留空 image 会构建调用仓库的 Dockerfile；也可传不可变 GHCR 标签。
+    secrets: inherit
+```
+
+调用仓库的 **production** Environment 必须配置上述 Azure Variables。执行
+`provision-db` 或 `full-deploy` 时，还必须配置至少 16 字符的
+`DATABASE_PASSWORD` Environment secret；密码不是普通 workflow input，不会显示在
+人工触发表单中。`inject-data` 和 `full-deploy` 的 `sql_file` 必须指向调用仓库内的
+普通 SQL 文件，SQL 以目标数据库 owner 身份执行。`deploy-webapp` 只调用容器部署
+helper，不执行 SQL、不重启 PostgreSQL。应用目录和 `app.env` 仍需先通过
+`webstack-create-app` 或等效配置创建，并使用与 secret 相同的数据库凭据。
+`full-deploy` 用于首次部署；重复数据注入是否安全由 SQL 文件本身决定。
+
+“可调用”不等于匿名 Azure 权限：每个调用仓库仍必须加入 Terraform 的
+`github_repositories` allowlist，才能获得与其 `production` Environment 绑定的
+OIDC 身份。没有 Environment 审批和 Azure OIDC 授权的仓库无法操作 VM。
+
+输出镜像必须使用 commit SHA 这种不可变标签；不要用 `latest`。对于私有 GHCR 镜像，需要在 VM 上以 root 进行一次 `docker login ghcr.io`：使用有对应包读取权限的账号及 `read:packages` token；不要把 token 放进 Terraform、Run Command 脚本或 GitHub 仓库。Docker 默认凭据文件不是加密保险箱，应保护它，必要时使用 credential helper。公开镜像不需要这一步。
 
 **只有受信任的仓库才能获得部署身份。** 虽然每仓库拥有不同身份、Azure 权限只覆盖这台 VM，但 Run Command 在机内以 root 执行，因此不是“只允许控制自己 app”的权限隔离。它也能间接使用 VM 的备份身份。互不信任的项目应该使用不同虚机，不能仅靠 Compose 隔离。
 

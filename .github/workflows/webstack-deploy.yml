@@ -1,0 +1,247 @@
+name: Webstack deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Deployment mode
+        type: choice
+        required: true
+        default: deploy-webapp
+        options:
+          - deploy-webapp
+          - provision-db
+          - inject-data
+          - full-deploy
+      app_name:
+        description: App name on the VM (required for deploy-webapp and full-deploy)
+        required: false
+        default: app_a
+      database_name:
+        description: Database name (required for provision-db and inject-data/full-deploy)
+        required: false
+        default: ""
+      database_user:
+        description: Database user/role name
+        required: false
+        default: ""
+      sql_file:
+        description: Repository path to SQL file for injection
+        required: false
+        default: ""
+      image:
+        description: Existing immutable GHCR image; leave empty to build this repository
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      mode:
+        description: deploy-webapp, provision-db, inject-data, or full-deploy
+        type: string
+        required: true
+      app_name:
+        type: string
+        required: false
+        default: ""
+      image:
+        description: Existing immutable GHCR image; leave empty to build the caller repository
+        type: string
+        required: false
+        default: ""
+      database_name:
+        type: string
+        required: false
+        default: ""
+      database_user:
+        type: string
+        required: false
+        default: ""
+      sql_file:
+        description: SQL path in the caller repository
+        type: string
+        required: false
+        default: ""
+    secrets:
+      DATABASE_PASSWORD:
+        description: Required by provision-db and full-deploy
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    if: ${{ (inputs.mode == 'deploy-webapp' || inputs.mode == 'full-deploy') && inputs.image == '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine image tag
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}:${COMMIT}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: webstack-${{ inputs.app_name != '' && inputs.app_name || inputs.database_name }}
+      cancel-in-progress: false
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Execute remote operation
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          APP_NAME: ${{ inputs.app_name != '' && inputs.app_name || vars.APP_NAME }}
+          IMAGE: ${{ inputs.image != '' && inputs.image || needs.build.outputs.image }}
+          DB_NAME: ${{ inputs.database_name }}
+          DB_USER: ${{ inputs.database_user }}
+          DB_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          SQL_FILE: ${{ inputs.sql_file }}
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          VM_NAME: ${{ vars.AZURE_VM_NAME }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$RESOURCE_GROUP" && -n "$VM_NAME" ]]
+          EXPECTED_MARKER=""
+          SQL_PATH=""
+          case "$MODE" in
+            provision-db)
+              [[ -n "$DB_NAME" && -n "$DB_USER" && -n "$DB_PASSWORD" ]] || {
+                echo "provision-db requires database_name, database_user and the DATABASE_PASSWORD secret" >&2
+                exit 1
+              }
+              EXPECTED_MARKER="WEBSTACK_DB_PROVISION_OK $DB_NAME $DB_USER"
+              ;;
+            inject-data)
+              [[ -n "$DB_NAME" && -n "$SQL_FILE" ]] || {
+                echo "inject-data requires database_name and sql_file" >&2
+                exit 1
+              }
+              EXPECTED_MARKER="WEBSTACK_DB_INJECT_OK $DB_NAME"
+              ;;
+            deploy-webapp)
+              [[ -n "$APP_NAME" && -n "$IMAGE" ]] || {
+                echo "deploy-webapp requires app_name and image" >&2
+                exit 1
+              }
+              EXPECTED_MARKER="WEBSTACK_DEPLOY_OK $APP_NAME"
+              ;;
+            full-deploy)
+              [[ -n "$DB_NAME" && -n "$DB_USER" && -n "$DB_PASSWORD" && -n "$SQL_FILE" ]] || {
+                echo "full-deploy requires database_name, database_user, sql_file and the DATABASE_PASSWORD secret" >&2
+                exit 1
+              }
+              [[ -n "$APP_NAME" && -n "$IMAGE" ]] || {
+                echo "full-deploy requires app_name and image" >&2
+                exit 1
+              }
+              EXPECTED_MARKER="WEBSTACK_FULL_DEPLOY_OK $APP_NAME"
+              ;;
+            *)
+              echo "Unsupported deployment mode: $MODE" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$MODE" == inject-data || "$MODE" == full-deploy ]]; then
+            SQL_PATH="$(realpath -e -- "$GITHUB_WORKSPACE/$SQL_FILE")"
+            [[ "$SQL_PATH" == "$GITHUB_WORKSPACE/"* && -f "$SQL_PATH" && ! -L "$SQL_PATH" ]] || {
+              echo "sql_file must be a regular file inside the checked-out repository" >&2
+              exit 1
+            }
+          fi
+
+          python3 - "$RUNNER_TEMP/webstack-ops.sh" "$SQL_PATH" <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          import shlex
+          import sys
+
+          output, sql_path = sys.argv[1:]
+          mode = os.environ["MODE"]
+          app = os.environ["APP_NAME"]
+          image = os.environ["IMAGE"]
+          database = os.environ["DB_NAME"]
+          user = os.environ["DB_USER"]
+          password = os.environ["DB_PASSWORD"]
+          def quote(value):
+              return shlex.quote(value)
+
+          lines = [
+              "#!/usr/bin/env bash",
+              "set -Eeuo pipefail",
+              "umask 077",
+              "seed=/tmp/webstack-seed-$$.sql",
+              "trap 'rm -f -- \"$seed\"' EXIT",
+          ]
+          if sql_path:
+              encoded = base64.b64encode(Path(sql_path).read_bytes()).decode()
+              lines.append(f"printf %s {quote(encoded)} | base64 -d > \"$seed\"")
+          if mode in ("provision-db", "full-deploy"):
+              lines.append(
+                  f"WEBSTACK_DB_PASSWORD={quote(password)} /usr/local/sbin/webstack-db "
+                  f"provision --db {quote(database)} --user {quote(user)}"
+              )
+          if mode in ("inject-data", "full-deploy"):
+              lines.append(
+                  f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
+                  '--sql-file "$seed"'
+              )
+          if mode in ("deploy-webapp", "full-deploy"):
+              lines.append(
+                  f"/usr/local/sbin/webstack-db deploy --app {quote(app)} --image {quote(image)}"
+              )
+          if mode == "full-deploy":
+              lines.append(f"printf '%s\\n' {quote('WEBSTACK_FULL_DEPLOY_OK ' + app)}")
+          Path(output).write_text("\n".join(lines) + "\n")
+          PY
+          chmod 0700 "$RUNNER_TEMP/webstack-ops.sh"
+
+          az vm run-command invoke \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$VM_NAME" \
+            --command-id RunShellScript \
+            --scripts @"$RUNNER_TEMP/webstack-ops.sh" \
+            --output json > "$RUNNER_TEMP/result.json"
+          python3 - "$RUNNER_TEMP/result.json" "$EXPECTED_MARKER" <<'PY'
+          import json, sys
+          result = json.load(open(sys.argv[1]))
+          messages = "\n".join(item.get("message", "") for item in result.get("value", []))
+          print(messages)
+          if sys.argv[2] not in messages.splitlines():
+              raise SystemExit(f"Remote operation did not complete: missing {sys.argv[2]!r}")
+          PY

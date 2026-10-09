@@ -20,6 +20,7 @@ locals {
   host_files = [
     { source = "backup.py", destination = "/usr/local/sbin/webstack-backup" },
     { source = "create-app.py", destination = "/usr/local/sbin/webstack-create-app" },
+    { source = "db-ops.sh", destination = "/usr/local/sbin/webstack-db" },
     { source = "deploy-app.sh", destination = "/usr/local/sbin/webstack-deploy" },
     { source = "bootstrap.sh", destination = "/etc/webstack/bootstrap.sh" },
   ]
@@ -406,12 +407,12 @@ resource "azurerm_user_assigned_identity" "github" {
 }
 
 resource "azurerm_federated_identity_credential" "github" {
-  for_each  = var.github_repositories
-  name      = "github-production"
-  parent_id = azurerm_user_assigned_identity.github[each.key].id
-  audience  = ["api://AzureADTokenExchange"]
-  issuer    = "https://token.actions.githubusercontent.com"
-  subject   = "repo:${each.key}:environment:production"
+  for_each                  = var.github_repositories
+  name                      = "github-production"
+  user_assigned_identity_id = azurerm_user_assigned_identity.github[each.key].id
+  audience                  = ["api://AzureADTokenExchange"]
+  issuer                    = "https://token.actions.githubusercontent.com"
+  subject                   = "repo:${each.key}:environment:production"
 }
 
 resource "azurerm_role_definition" "github" {

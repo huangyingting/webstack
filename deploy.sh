@@ -57,6 +57,7 @@ files = {
     "/etc/webstack/config.json": json.dumps(config).encode(),
     "/usr/local/sbin/webstack-backup": pathlib.Path("backup.py").read_bytes(),
     "/usr/local/sbin/webstack-create-app": pathlib.Path("create-app.py").read_bytes(),
+    "/usr/local/sbin/webstack-db": pathlib.Path("db-ops.sh").read_bytes(),
     "/usr/local/sbin/webstack-deploy": pathlib.Path("deploy-app.sh").read_bytes(),
     "/etc/webstack/bootstrap.sh": pathlib.Path("bootstrap.sh").read_bytes(),
 }
