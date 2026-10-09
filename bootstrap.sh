@@ -16,6 +16,7 @@ if [[ ${WEBSTACK_CLOUD_INIT:-0} != 1 ]]; then
 fi
 install -d -m 0755 /etc/apt/keyrings /etc/webstack /etc/caddy/sites
 install -d -m 0700 /var/lib/webstack-backup
+rm -f /etc/apt/sources.list.d/caddy.list
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl gnupg python3 tzdata postgresql postgresql-contrib \
     gzip openssl iptables unattended-upgrades mdadm rsync
@@ -24,13 +25,17 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/doc
 chmod 0644 /etc/apt/keyrings/docker.asc
 printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
     "$(dpkg --print-architecture)" "$VERSION_CODENAME" > /etc/apt/sources.list.d/docker.list
-curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-    | gpg --batch --yes --dearmor -o /etc/apt/keyrings/caddy.gpg
-chmod 0644 /etc/apt/keyrings/caddy.gpg
-printf 'deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main\n' \
-    > /etc/apt/sources.list.d/caddy.list
 apt-get update -qq
-apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin caddy
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+caddy_version=2.11.7
+caddy_package="caddy_${caddy_version}_linux_amd64.deb"
+caddy_sha256=47e8351c2317b427af14a103e763ca1118a3d2396a88b4c0669cdec9c4a68a957690194e2423a1633f53135741c33a41bdac2b55515b7d0f7adc8b733add50d9
+curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/${caddy_package}" \
+    -o "/tmp/$caddy_package"
+printf '%s  %s\n' "$caddy_sha256" "/tmp/$caddy_package" | sha512sum -c -
+apt-get install -y -qq "/tmp/$caddy_package"
+rm -f "/tmp/$caddy_package"
 
 data_disk_count=$(python3 - <<'PY'
 import json
@@ -102,6 +107,16 @@ install -d -m 0711 /data/apps
 install -d -o postgres -g postgres -m 0750 /data/postgresql
 install -d -m 0710 /data/docker
 
+mapfile -t clusters < <(pg_lsclusters --no-header)
+[[ ${#clusters[@]} -eq 1 ]] || {
+    echo "Expected exactly one PostgreSQL cluster; refusing to change multiple clusters" >&2
+    exit 1
+}
+read -r pg_version pg_cluster _ <<< "${clusters[0]}"
+[[ $pg_cluster == main ]] || { echo "Expected the main PostgreSQL cluster" >&2; exit 1; }
+if pg_ctlcluster "$pg_version" "$pg_cluster" status >/dev/null 2>&1; then
+    pg_ctlcluster "$pg_version" "$pg_cluster" stop
+fi
 systemctl stop postgresql docker
 if [[ ! -e /data/apps/.webstack-migrated ]]; then
     if [[ -d /srv/apps ]] && find /srv/apps -mindepth 1 -print -quit | grep -q .; then
@@ -163,13 +178,6 @@ ExecStartPost=/usr/local/sbin/webstack-firewall
 EOF
 /usr/local/sbin/webstack-firewall
 
-mapfile -t clusters < <(pg_lsclusters --no-header)
-[[ ${#clusters[@]} -eq 1 ]] || {
-    echo "Expected exactly one PostgreSQL cluster; refusing to change multiple clusters" >&2
-    exit 1
-}
-read -r pg_version pg_cluster _ <<< "${clusters[0]}"
-[[ $pg_cluster == main ]] || { echo "Expected the main PostgreSQL cluster" >&2; exit 1; }
 pg_config="/etc/postgresql/$pg_version/$pg_cluster"
 memory_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
 shared_mb=$((memory_kb / 1024 / 8))

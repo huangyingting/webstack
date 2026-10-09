@@ -52,6 +52,7 @@ resource "azurerm_storage_account" "backups" {
   allow_nested_items_to_be_public = false
   shared_access_key_enabled       = false
   default_to_oauth_authentication = true
+  public_network_access_enabled   = false
   tags                            = local.tags
 
   lifecycle {
@@ -113,10 +114,26 @@ resource "azurerm_virtual_network" "apps" {
 }
 
 resource "azurerm_subnet" "apps" {
-  name                 = "apps"
-  resource_group_name  = azurerm_resource_group.apps.name
-  virtual_network_name = azurerm_virtual_network.apps.name
-  address_prefixes     = ["10.42.1.0/24"]
+  name                              = "apps"
+  resource_group_name               = azurerm_resource_group.apps.name
+  virtual_network_name              = azurerm_virtual_network.apps.name
+  address_prefixes                  = ["10.42.1.0/24"]
+  private_endpoint_network_policies = "Disabled"
+}
+
+resource "azurerm_private_dns_zone" "blob" {
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = azurerm_resource_group.apps.name
+  tags                = local.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "blob" {
+  name                  = "${var.prefix}-blob-dns-link"
+  resource_group_name   = azurerm_resource_group.apps.name
+  private_dns_zone_name = azurerm_private_dns_zone.blob.name
+  virtual_network_id    = azurerm_virtual_network.apps.id
+  registration_enabled  = false
+  tags                  = local.tags
 }
 
 resource "azurerm_network_security_group" "apps" {
@@ -175,6 +192,10 @@ resource "azurerm_public_ip" "apps" {
   allocation_method   = "Static"
   sku                 = "Standard"
   tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [ip_tags, zones]
+  }
 }
 
 resource "azurerm_network_interface" "apps" {
@@ -193,6 +214,26 @@ resource "azurerm_network_interface" "apps" {
 resource "azurerm_network_interface_security_group_association" "apps" {
   network_interface_id      = azurerm_network_interface.apps.id
   network_security_group_id = azurerm_network_security_group.apps.id
+}
+
+resource "azurerm_private_endpoint" "blob" {
+  name                = "${var.prefix}-blob-private-endpoint"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.apps.name
+  subnet_id           = azurerm_subnet.apps.id
+  tags                = local.tags
+
+  private_service_connection {
+    name                           = "${var.prefix}-blob-connection"
+    private_connection_resource_id = azurerm_storage_account.backups.id
+    is_manual_connection           = false
+    subresource_names              = ["blob"]
+  }
+
+  private_dns_zone_group {
+    name                 = "blob"
+    private_dns_zone_ids = [azurerm_private_dns_zone.blob.id]
+  }
 }
 
 resource "azurerm_managed_disk" "data" {

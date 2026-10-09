@@ -15,11 +15,15 @@
 | 应用 | Docker Compose；仅将应用端口绑定到宿主机回环地址 |
 | 数据库访问 | 固定 Docker 网络 `172.30.0.0/24`，网关 `172.30.0.1` |
 | 备份 | PostgreSQL 全实例逻辑备份，包含角色和数据库，gzip 压缩后上传 Azure Blob |
+| 备份网络 | Storage public access disabled；VM 通过 Private Endpoint 和私有 DNS 访问 Blob |
 | 身份 | 备份使用专用托管身份；GitHub 每仓库一个 OIDC 身份 |
 
 PostgreSQL 数据位于 `/data/postgresql`，Docker 数据位于 `/data/docker`，应用位于 `/data/apps`。RAID 0 提高汇总吞吐量但**没有冗余**：任一数据盘故障都会使整个阵列不可用，因此 Blob 备份和实际恢复演练是上线前提。
 
 基础费用需加上 4 块 E4 数据盘的费用；请在目标区域用 Azure Pricing Calculator 核实。**不含 Blob 存储/操作、额外流量、域名及税费**。B 系列不适合持续高 CPU 负载，可通过 `vm_size` 改成非突发规格。
+
+备份存储默认关闭公网访问。Terraform 会在应用 VNet 内创建 Blob Private Endpoint 和
+`privatelink.blob.core.windows.net` 私有 DNS 链接；因此只能从 VNet 内的 VM 访问备份容器。
 
 ## 开始部署
 
@@ -56,7 +60,7 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 ./deploy.sh
 ```
 
-`deploy.sh` 会初始化 Terraform、检查配置、展示资源变更并要求确认；应用变更后等待 cloud-init，检查本机服务、备份计时器及首份真实 Blob 备份。**首次备份失败不会报告部署成功。** 需要无人值守执行时，显式使用 `./deploy.sh --yes`。
+`deploy.sh` 会初始化 Terraform、检查配置、展示资源变更并要求确认；应用变更后等待 cloud-init，检查本机服务、备份计时器及首份真实 Blob 备份。**首次备份失败不会报告部署成功。** 需要无人值守执行时，显式使用 `./deploy.sh --yes`。首次部署需要等待 Azure RBAC 和 Private Endpoint/DNS 传播。
 
 Azure 登录账号需要创建资源、自定义角色和分配角色的权限；简单起步可以使用订阅 Owner。否则使用 Contributor 配合覆盖相关作用域的 RBAC 管理权限，并确保能够创建自定义角色。GitHub 身份直接使用 Azure 托管身份的联合凭据，不需要创建 Entra 应用或保存 client secret。
 
