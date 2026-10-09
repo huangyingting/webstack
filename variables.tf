@@ -16,6 +16,21 @@ variable "prefix" {
   }
 }
 
+variable "resource_group_name" {
+  type        = string
+  description = "Exact Azure application resource group name (1-83 characters). Defaults to <prefix>-rg when null; the backup resource group appends -backup."
+  default     = null
+  nullable    = true
+  validation {
+    condition = var.resource_group_name == null ? true : (
+      length(var.resource_group_name) >= 1 &&
+      length(var.resource_group_name) <= 83 &&
+      can(regex("^[A-Za-z0-9_().-]*[A-Za-z0-9_()-]$", var.resource_group_name))
+    )
+    error_message = "Use a 1-83 character Azure resource group name containing only letters, digits, underscores, parentheses, hyphens, or periods; it cannot end with a period. The derived <name>-backup resource group must fit Azure's 90-character limit."
+  }
+}
+
 variable "location" {
   type    = string
   default = "southeastasia"

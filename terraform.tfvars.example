@@ -1,5 +1,6 @@
 subscription_id     = "00000000-0000-0000-0000-000000000000"
 prefix              = "myapps"
+resource_group_name = null # Defaults to "<prefix>-rg" (max 83 chars); backup is the exact name plus "-backup".
 location            = "southeastasia"
 vm_size             = "Standard_D2as_v5"
 vm_name             = "myapps-vm"

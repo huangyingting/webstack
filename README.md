@@ -41,7 +41,7 @@ chmod 600 terraform.tfvars
 chmod +x deploy.sh
 ```
 
-编辑 `terraform.tfvars`：替换订阅 ID、资源前缀、`vm_name`、管理员公网 IP 的 `/32`、邮箱和 GitHub 仓库。`203.0.113.10` 和 `owner/app-a` 都只是示例，不能原样使用。公开和私有仓库都支持，仓库名使用小写。
+编辑 `terraform.tfvars`：替换订阅 ID、资源前缀、`vm_name`、管理员公网 IP 的 `/32`、邮箱和 GitHub 仓库。应用资源组的 `resource_group_name` 保持 `null` 时默认为 `<prefix>-rg`；如需指定精确名称，将它设置为不超过 83 个字符的 Azure 资源组名称。备份资源组始终为该名称加上 `-backup`（例如 `WebStack` 对应 `WebStack-backup`，默认 `testapps-rg` 对应 `testapps-rg-backup`），从而保证派生名称不超过 Azure 的 90 字符限制。`203.0.113.10` 和 `owner/app-a` 都只是示例，不能原样使用。公开和私有仓库都支持，仓库名使用小写。
 
 SSH 公钥可任选一种方式传入；不要提供私钥：
 

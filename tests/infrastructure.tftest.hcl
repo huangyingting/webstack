@@ -14,7 +14,8 @@ run "infrastructure_contract" {
   command = plan
 
   variables {
-    vm_name = null
+    resource_group_name = null
+    vm_name             = null
   }
 
   assert {
@@ -24,6 +25,14 @@ run "infrastructure_contract" {
   assert {
     condition     = azurerm_linux_virtual_machine.apps.name == "testapps-vm"
     error_message = "The VM name must default from the deployment prefix."
+  }
+  assert {
+    condition     = azurerm_resource_group.apps.name == "testapps-rg"
+    error_message = "The application resource group name must default from the deployment prefix."
+  }
+  assert {
+    condition     = azurerm_resource_group.backups.name == "testapps-rg-backup"
+    error_message = "The backup resource group name must append -backup to the default application resource group name."
   }
   assert {
     condition     = azurerm_linux_virtual_machine.apps.admin_username == "azadmin"
@@ -97,10 +106,19 @@ run "deployment_inputs" {
   command = plan
 
   variables {
-    vm_name        = "customer-vm-01"
-    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPkHryBsnZb2lAl6wS9STK8LOXU4DgC2rCsmJxRtJpM deploy@example.com"
+    resource_group_name = "Customer.Apps_(Prod)-RG"
+    vm_name             = "customer-vm-01"
+    ssh_public_key      = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPkHryBsnZb2lAl6wS9STK8LOXU4DgC2rCsmJxRtJpM deploy@example.com"
   }
 
+  assert {
+    condition     = azurerm_resource_group.apps.name == "Customer.Apps_(Prod)-RG"
+    error_message = "The caller must be able to set the exact application resource group name."
+  }
+  assert {
+    condition     = azurerm_resource_group.backups.name == "Customer.Apps_(Prod)-RG-backup"
+    error_message = "The backup resource group name must append -backup to the custom application resource group name."
+  }
   assert {
     condition     = azurerm_linux_virtual_machine.apps.name == "customer-vm-01"
     error_message = "The caller must be able to set the exact Azure VM name."

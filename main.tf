@@ -1,7 +1,8 @@
 data "azurerm_client_config" "current" {}
 
 locals {
-  vm_name = coalesce(var.vm_name, "${var.prefix}-vm")
+  resource_group_name = coalesce(var.resource_group_name, "${var.prefix}-rg")
+  vm_name             = coalesce(var.vm_name, "${var.prefix}-vm")
   tags = {
     managed-by = "azure-webstack"
     deployment = var.prefix
@@ -27,13 +28,13 @@ locals {
 }
 
 resource "azurerm_resource_group" "apps" {
-  name     = "${var.prefix}-rg"
+  name     = local.resource_group_name
   location = var.location
   tags     = local.tags
 }
 
 resource "azurerm_resource_group" "backups" {
-  name     = "${var.prefix}-backup-rg"
+  name     = "${local.resource_group_name}-backup"
   location = var.location
   tags     = local.tags
 
