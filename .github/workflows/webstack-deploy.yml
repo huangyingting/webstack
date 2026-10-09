@@ -241,7 +241,7 @@ jobs:
           DATABASE_URL_QUERY: ${{ inputs.database_url_query }}
           APPLICATION_ENV: ${{ secrets.APPLICATION_ENV }}
           REGISTRY_USER: ${{ github.actor }}
-          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_TOKEN: ${{ github.token }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           VM_NAME: ${{ vars.AZURE_VM_NAME }}
         run: |
