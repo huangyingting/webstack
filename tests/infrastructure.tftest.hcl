@@ -15,6 +15,12 @@ variables {
       owner_id      = "123456"
       repository_id = "789012"
     }
+    "owner/app-b" = {
+      owner         = "owner"
+      repository    = "app-b"
+      owner_id      = "123456"
+      repository_id = "345678"
+    }
   }
 }
 
@@ -109,8 +115,24 @@ run "infrastructure_contract" {
     error_message = "Immutable GitHub repositories must use canonical names plus numeric owner and repository IDs."
   }
   assert {
-    condition     = azurerm_federated_identity_credential.github["owner/app-b"].subject == "repo:owner/app-b:environment:production"
-    error_message = "Repositories without immutable IDs must retain the legacy subject format."
+    condition     = azurerm_federated_identity_credential.github["owner/app-b"].subject == "repo:owner@123456/app-b@345678:environment:production"
+    error_message = "Every deployment repository must use its immutable GitHub subject."
+  }
+  assert {
+    condition = alltrue([
+      for action in [
+        "Microsoft.Compute/virtualMachines/instanceView/read",
+        "Microsoft.Compute/virtualMachines/start/action",
+      ] :
+      contains(azurerm_role_definition.github[0].permissions[0].actions, action)
+    ])
+    error_message = "Deployment identities must be able to inspect and start a stopped VM."
+  }
+  assert {
+    condition = output.deployment.GITHUB_DEPLOYMENTS["owner/app-a"].OIDC_SUBJECT == (
+      "repo:Owner@123456/App-A@789012:environment:production"
+    )
+    error_message = "Terraform output must expose the exact immutable subject paired with each client ID."
   }
 }
 
@@ -139,4 +161,21 @@ run "deployment_inputs" {
     condition     = one(azurerm_linux_virtual_machine.apps.admin_ssh_key).public_key == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGPkHryBsnZb2lAl6wS9STK8LOXU4DgC2rCsmJxRtJpM deploy@example.com"
     error_message = "A directly supplied SSH public key must be installed on the VM."
   }
+}
+
+run "reject_incomplete_github_ids" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      "owner/app-a" = {
+        owner         = "Owner"
+        repository    = "App-A"
+        owner_id      = "123456"
+        repository_id = "789012"
+      }
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
 }

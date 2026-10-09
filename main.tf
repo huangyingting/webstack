@@ -440,24 +440,26 @@ resource "azurerm_federated_identity_credential" "github" {
   user_assigned_identity_id = azurerm_user_assigned_identity.github[each.key].id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = "https://token.actions.githubusercontent.com"
-  subject = contains(keys(var.github_repository_ids), each.key) ? format(
+  subject = format(
     "repo:%s@%s/%s@%s:environment:production",
-    coalesce(var.github_repository_ids[each.key].owner, split("/", each.key)[0]),
+    var.github_repository_ids[each.key].owner,
     var.github_repository_ids[each.key].owner_id,
-    coalesce(var.github_repository_ids[each.key].repository, split("/", each.key)[1]),
+    var.github_repository_ids[each.key].repository,
     var.github_repository_ids[each.key].repository_id,
-  ) : "repo:${each.key}:environment:production"
+  )
 }
 
 resource "azurerm_role_definition" "github" {
   count       = length(var.github_repositories) > 0 ? 1 : 0
   name        = "${var.prefix} VM deployment"
   scope       = azurerm_resource_group.apps.id
-  description = "Read this VM and invoke root-level Run Command for deployment."
+  description = "Read or start this VM and invoke root-level Run Command for deployment."
   permissions {
     actions = [
       "Microsoft.Compute/virtualMachines/read",
+      "Microsoft.Compute/virtualMachines/instanceView/read",
       "Microsoft.Compute/virtualMachines/runCommand/action",
+      "Microsoft.Compute/virtualMachines/start/action",
     ]
     not_actions = []
   }

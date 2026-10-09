@@ -164,22 +164,30 @@ variable "github_repositories" {
 
 variable "github_repository_ids" {
   type = map(object({
-    owner         = optional(string)
-    repository    = optional(string)
+    owner         = string
+    repository    = string
     owner_id      = string
     repository_id = string
   }))
   default     = {}
-  description = "Immutable GitHub owner/repository IDs keyed by an entry in github_repositories."
+  description = "Canonical GitHub names and immutable IDs for every repository in github_repositories."
   validation {
-    condition = alltrue([
-      for repo, ids in var.github_repository_ids :
-      contains(var.github_repositories, repo) &&
-      (ids.owner == null || can(regex("^[A-Za-z0-9_.-]+$", ids.owner))) &&
-      (ids.repository == null || can(regex("^[A-Za-z0-9_.-]+$", ids.repository))) &&
-      can(regex("^[1-9][0-9]*$", ids.owner_id)) &&
-      can(regex("^[1-9][0-9]*$", ids.repository_id))
-    ])
-    error_message = "Each github_repository_ids key must be allowlisted and contain valid canonical names plus numeric owner_id and repository_id values."
+    condition = (
+      length(var.github_repository_ids) == length(var.github_repositories) &&
+      alltrue([
+        for repo in var.github_repositories :
+        contains(keys(var.github_repository_ids), repo)
+      ]) &&
+      alltrue([
+        for repo, ids in var.github_repository_ids :
+        contains(var.github_repositories, repo) &&
+        can(regex("^[A-Za-z0-9_.-]+$", ids.owner)) &&
+        can(regex("^[A-Za-z0-9_.-]+$", ids.repository)) &&
+        lower("${ids.owner}/${ids.repository}") == repo &&
+        can(regex("^[1-9][0-9]*$", ids.owner_id)) &&
+        can(regex("^[1-9][0-9]*$", ids.repository_id))
+      ])
+    )
+    error_message = "Provide canonical owner/repository names and numeric immutable IDs for every github_repositories entry; lowercase canonical names must match the map key."
   }
 }

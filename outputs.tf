@@ -15,6 +15,12 @@ output "deployment" {
     DATA_MOUNT             = "/data"
     DATA_DISK_TOTAL_GB     = var.data_disk_count * var.data_disk_size_gb
     GITHUB_CLIENT_IDS      = { for repo, identity in azurerm_user_assigned_identity.github : repo => identity.client_id }
+    GITHUB_DEPLOYMENTS = {
+      for repo, identity in azurerm_user_assigned_identity.github : repo => {
+        AZURE_CLIENT_ID = identity.client_id
+        OIDC_SUBJECT    = azurerm_federated_identity_credential.github[repo].subject
+      }
+    }
   }
 }
 

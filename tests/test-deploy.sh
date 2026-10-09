@@ -86,6 +86,7 @@ assert "database_password" not in triggers["workflow_dispatch"]["inputs"]
 deploy = reusable["jobs"]["deploy"]
 assert deploy["environment"] == "production"
 assert deploy["steps"][0]["uses"].startswith("actions/checkout@")
+step_scripts = {step.get("name"): step.get("run", "") for step in deploy["steps"]}
 run_script = deploy["steps"][-1]["run"]
 assert 'EXPECTED_MARKER="WEBSTACK_FULL_DEPLOY_OK $APP_NAME"' in run_script
 assert "operations_dockerfile and operations_command must be supplied together" in run_script
@@ -102,6 +103,10 @@ assert "docker login ghcr.io --username" in run_script
 assert "REGISTRY_TOKEN: ${{ github.token }}" in Path(
     ".github/workflows/webstack-deploy.yml"
 ).read_text()
+assert "Missing production environment variable: $name" in step_scripts[
+    "Validate Azure configuration"
+]
+assert "az vm start --resource-group" in step_scripts["Ensure VM is running"]
 assert "messages.splitlines()" in run_script
 assert "generate-sas" not in run_script
 assert "sql_blob_url" not in run_script

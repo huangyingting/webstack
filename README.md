@@ -121,14 +121,17 @@ helper 使用每应用部署锁，先拉镜像，再更新该应用；失败时�
 
 | Variable | 值 |
 |---|---|
-| `AZURE_CLIENT_ID` | Terraform 输出 `GITHUB_CLIENT_IDS` 中当前仓库的 client ID |
+| `AZURE_CLIENT_ID` | Terraform 输出 `GITHUB_DEPLOYMENTS` 中当前仓库的 `AZURE_CLIENT_ID` |
 | `AZURE_TENANT_ID` | 对应 Terraform 输出 |
 | `AZURE_SUBSCRIPTION_ID` | 对应 Terraform 输出 |
 | `AZURE_RESOURCE_GROUP` | 对应 Terraform 输出 |
 | `AZURE_VM_NAME` | 对应 Terraform 输出 |
 | `APP_NAME` | 服务器上的应用名，如 `app_a` |
 
-流程为：GitHub runner 构建 amd64 镜像 → 推送 GHCR（commit SHA 标签）→ OIDC 登录 Azure → Run Command 更新应用。**不用开放 GitHub runner 的 SSH IP，也不用长期 Azure 密钥。**
+流程为：GitHub runner 构建 amd64 镜像 → 推送 GHCR（commit SHA 标签）→ OIDC
+登录 Azure → 必要时启动已停止的 VM → Run Command 更新应用。**不用开放 GitHub
+runner 的 SSH IP，也不用长期 Azure 密钥。** Terraform 为部署身份授予的自定义角色只允许
+读取、启动这台 VM 和执行 Run Command。
 
 GitHub Action 也支持人工触发的数据库与应用生命周期操作：
 
@@ -202,17 +205,17 @@ workflow 通过 Azure Run Command 临时安装一次性 SSH 公钥、校验 VM �
 大型导入不会受 Azure Run Command 的执行时限限制，实际数据库导入通过已建立的
 SSH 控制连接执行。GitHub runner 必须能连接 VM 的 `ssh_port`；如果将
 `admin_cidr` 收紧到固定办公地址，大型导入会被 NSG 阻止，需要改用能访问该端口的
-self-hosted runner。`deploy-webapp` 只调用容器部署
-helper，不执行 SQL、不重启 PostgreSQL。应用目录和 `app.env` 仍需先通过
-`webstack-create-app` 或等效配置创建，并使用与 secret 相同的数据库凭据。
+self-hosted runner。`deploy-webapp` 不重启 PostgreSQL。首次部署时，如果应用目录尚不存在，workflow
+会调用 `webstack-create-app` 创建独立数据库、角色、root-only `app.env`、Compose
+配置和 Caddy 路由；随后运行可选 migration/seed image，再激活应用镜像。
 `full-deploy` 用于首次部署；重复数据注入是否安全由 SQL 文件本身决定。
 
-“可调用”不等于匿名 Azure 权限：每个调用仓库仍必须加入 Terraform 的
-`github_repositories` allowlist，才能获得与其 `production` Environment 绑定的
-OIDC 身份。没有 Environment 审批和 Azure OIDC 授权的仓库无法操作 VM。
-
-2026 年 7 月后创建、重命名或迁移的 GitHub 仓库默认使用不可变 OIDC subject。
-这类仓库还必须在 `github_repository_ids` 提供数字 owner/repository ID：
+“可调用”不等于匿名 Azure 权限：每个调用仓库必须同时加入 Terraform 的
+`github_repositories` allowlist，并在 `github_repository_ids` 提供 canonical
+名称和不可变数字 ID，才能获得与其 `production` Environment 绑定的 OIDC 身份。
+Terraform 会在任何仓库缺少 ID、名称大小写不匹配或 map key 不匹配时直接拒绝 plan，
+避免创建部署时才会失败的 legacy credential。没有 Environment 审批和 Azure OIDC
+授权的仓库无法操作 VM。
 
 ```hcl
 github_repositories = ["huangyingting/eduloop"]
@@ -226,12 +229,22 @@ github_repository_ids = {
 }
 ```
 
-可从 `GET /repos/OWNER/REPO/actions/oidc/customization/sub` 的
-`sub_claim_prefix` 读取这些 ID 和大小写敏感的 canonical owner/repository 名称。
+可直接用 GitHub CLI 读取 canonical 名称和 ID：
+
+```bash
+gh api repos/OWNER/REPO \
+  --jq '{owner: .owner.login, repository: .name, owner_id: (.owner.id | tostring), repository_id: (.id | tostring)}'
+gh api repos/OWNER/REPO/actions/oidc/customization/sub
+```
+
+第二条命令应显示 `use_default: true`、`use_immutable_subject: true`，其
+`sub_claim_prefix` 也会包含相同 ID 和大小写敏感的 canonical 名称。
 map key 保持小写以稳定现有 identity 地址；`owner` 和 `repository` 必须匹配 GitHub
 实际大小写。Terraform 会生成形如
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production` 的 federated
-credential；旧仓库未提供 ID 时继续使用名称格式。
+credential。应用 Terraform 后运行 `terraform output -json deployment`，从
+`GITHUB_DEPLOYMENTS["owner/repo"]` 复制成对的 `AZURE_CLIENT_ID` 和
+`OIDC_SUBJECT`；不要把其他仓库的 client ID 配给调用仓库。
 
 输出镜像必须使用 commit SHA 这种不可变标签；不要用 `latest`。Reusable workflow
 使用调用任务短期有效的 `GITHUB_TOKEN` 和独立临时 `DOCKER_CONFIG` 拉取私有 GHCR

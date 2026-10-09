@@ -216,11 +216,48 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref != '' && inputs.ref || github.sha }}
+      - name: Validate Azure configuration
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME }}
+        run: |
+          set -Eeuo pipefail
+          for name in \
+            AZURE_CLIENT_ID \
+            AZURE_TENANT_ID \
+            AZURE_SUBSCRIPTION_ID \
+            AZURE_RESOURCE_GROUP \
+            AZURE_VM_NAME
+          do
+            [[ -n "${!name}" ]] || {
+              echo "Missing production environment variable: $name" >&2
+              exit 1
+            }
+          done
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Ensure VM is running
+        env:
+          RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          VM_NAME: ${{ vars.AZURE_VM_NAME }}
+        run: |
+          set -Eeuo pipefail
+          power_state="$(
+            az vm get-instance-view \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$VM_NAME" \
+              --query "instanceView.statuses[?starts_with(code, 'PowerState/')].code | [0]" \
+              --output tsv
+          )"
+          if [[ "$power_state" != "PowerState/running" ]]; then
+            az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --output none
+          fi
       - name: Execute remote operation
         shell: bash
         env:
