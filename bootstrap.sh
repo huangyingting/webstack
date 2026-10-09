@@ -18,7 +18,7 @@ install -d -m 0755 /etc/apt/keyrings /etc/webstack /etc/caddy/sites
 install -d -m 0700 /var/lib/webstack-backup
 rm -f /etc/apt/sources.list.d/caddy.list
 apt-get update -qq
-apt-get install -y -qq ca-certificates curl gnupg python3 tzdata postgresql postgresql-contrib \
+apt-get install -y -qq ca-certificates curl gnupg python3 tzdata sudo postgresql postgresql-contrib \
     gzip openssl iptables unattended-upgrades mdadm openssh-server rsync
 
 ssh_port=$(python3 - <<'PY'
@@ -45,6 +45,9 @@ PY
 if ! id "$admin_username" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/bash --groups sudo "$admin_username"
 fi
+printf '%s ALL=(ALL:ALL) NOPASSWD:ALL\n' "$admin_username" > /etc/sudoers.d/webstack-admin
+chmod 0440 /etc/sudoers.d/webstack-admin
+visudo -cf /etc/sudoers.d/webstack-admin >/dev/null
 install -d -m 0700 -o "$admin_username" -g "$admin_username" "/home/$admin_username/.ssh"
 if [[ -s /home/azureadmin/.ssh/authorized_keys && ! -s "/home/$admin_username/.ssh/authorized_keys" ]]; then
     install -m 0600 -o "$admin_username" -g "$admin_username" \

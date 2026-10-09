@@ -53,7 +53,8 @@ ssh_public_key = "ssh-ed25519 AAAAC3... admin@example.com"
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 ```
 
-默认 Linux 管理员为 `azadmin`。SSH 默认监听 `22222`，且仅允许 `admin_cidr` 访问。连接示例：
+默认 Linux 管理员为 `azadmin`，并配置为无需密码即可使用 `sudo`。SSH 默认监听
+`22222`，且仅允许 `admin_cidr` 访问。连接示例：
 
 ```bash
 ssh -p 22222 azadmin@PUBLIC_IP

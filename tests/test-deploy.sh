@@ -10,6 +10,8 @@ grep -q 'RequiresMountsFor=/data' bootstrap.sh
 grep -q 'Port $ssh_port' bootstrap.sh
 grep -q 'systemctl restart ssh.service' bootstrap.sh
 grep -q 'useradd --create-home --shell /bin/bash --groups sudo' bootstrap.sh
+grep -q 'NOPASSWD:ALL' bootstrap.sh
+grep -q 'visudo -cf /etc/sudoers.d/webstack-admin' bootstrap.sh
 assert_rejected() {
     local expected=$1
     shift
