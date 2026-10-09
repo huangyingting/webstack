@@ -1,7 +1,7 @@
 subscription_id     = "00000000-0000-0000-0000-000000000000"
 prefix              = "myapps"
 location            = "southeastasia"
-vm_size             = "Standard_B2als_v2"
+vm_size             = "Standard_D2as_v5"
 vm_name             = "myapps-vm"
 disk_size_gb        = 64
 data_disk_count     = 4

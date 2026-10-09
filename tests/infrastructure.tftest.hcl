@@ -13,9 +13,13 @@ variables {
 run "infrastructure_contract" {
   command = plan
 
+  variables {
+    vm_name = null
+  }
+
   assert {
-    condition     = azurerm_linux_virtual_machine.apps.size == "Standard_B2als_v2"
-    error_message = "The default must remain the economical 4GB VM."
+    condition     = azurerm_linux_virtual_machine.apps.size == "Standard_D2as_v5"
+    error_message = "The default must use the available 8GB D-series VM."
   }
   assert {
     condition     = azurerm_linux_virtual_machine.apps.name == "testapps-vm"

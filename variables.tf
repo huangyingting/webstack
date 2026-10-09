@@ -23,7 +23,7 @@ variable "location" {
 
 variable "vm_size" {
   type    = string
-  default = "Standard_B2als_v2"
+  default = "Standard_D2as_v5"
 }
 
 variable "vm_name" {

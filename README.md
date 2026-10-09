@@ -8,7 +8,7 @@
 
 | 部分 | 默认配置 |
 |---|---|
-| 虚机 | 新加坡，B2als v2，2 vCPU / 4GB，Ubuntu 24.04 LTS |
+| 虚机 | 新加坡，D2as v5，2 vCPU / 8GB，Ubuntu 24.04 LTS |
 | 磁盘 | 64GB 系统盘；4 块 32GB Standard SSD LRS 组成 128GB RAID 0，挂载到 `/data` |
 | 入口 | 原生 Caddy，多个域名，指定 Let's Encrypt，自动续期 |
 | 数据库 | 原生 PostgreSQL，单实例、每个 app 独立数据库和账号 |

@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+webstack.pub
 *.tfplan
 .deploy.tfplan
 .deployment/
