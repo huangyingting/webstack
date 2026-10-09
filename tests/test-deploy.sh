@@ -91,6 +91,8 @@ assert 'EXPECTED_MARKER="WEBSTACK_FULL_DEPLOY_OK $APP_NAME"' in run_script
 assert "operations_dockerfile and operations_command must be supplied together" in run_script
 assert "docker run --rm --network webstack-apps" in run_script
 assert "WEBSTACK_APP_OPERATION_OK" in run_script
+assert "release_env_var must be an uppercase environment variable name" in run_script
+assert "if release_env_var:" in run_script
 assert "messages.splitlines()" in run_script
 assert "generate-sas" not in run_script
 assert "sql_blob_url" not in run_script

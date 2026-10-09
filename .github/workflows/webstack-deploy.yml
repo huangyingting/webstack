@@ -45,6 +45,10 @@ on:
         description: Command to run in the operations image before deploying the webapp
         required: false
         default: ""
+      release_env_var:
+        description: Optional app.env variable populated from the immutable image tag
+        required: false
+        default: ""
   workflow_call:
     inputs:
       mode:
@@ -85,6 +89,11 @@ on:
         default: ""
       operations_command:
         description: Command to run in the operations image before deploying the webapp
+        type: string
+        required: false
+        default: ""
+      release_env_var:
+        description: Optional app.env variable populated from the immutable image tag
         type: string
         required: false
         default: ""
@@ -201,6 +210,7 @@ jobs:
           OPERATIONS_DOCKERFILE: ${{ inputs.operations_dockerfile }}
           OPERATIONS_COMMAND: ${{ inputs.operations_command }}
           OPERATIONS_IMAGE: ${{ needs.build-operations.outputs.image }}
+          RELEASE_ENV_VAR: ${{ inputs.release_env_var }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           VM_NAME: ${{ vars.AZURE_VM_NAME }}
         run: |
@@ -231,6 +241,10 @@ jobs:
               echo "The operations image must use an immutable commit tag" >&2
               exit 1
             }
+          fi
+          if [[ -n "$RELEASE_ENV_VAR" && ! "$RELEASE_ENV_VAR" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+            echo "release_env_var must be an uppercase environment variable name" >&2
+            exit 1
           fi
           case "$MODE" in
             provision-db)
@@ -461,6 +475,7 @@ jobs:
           password = os.environ["DB_PASSWORD"]
           operations_image = os.environ["OPERATIONS_IMAGE"]
           operations_command = os.environ["OPERATIONS_COMMAND"]
+          release_env_var = os.environ["RELEASE_ENV_VAR"]
           def quote(value):
               return shlex.quote(value)
 
@@ -492,6 +507,22 @@ jobs:
                       f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
                       '--sql-file "$seed"'
                   )
+          if release_env_var:
+              app_env = f"/data/apps/{app}/app.env"
+              release = image.rsplit(":", 1)[1]
+              update_environment = (
+                  "from pathlib import Path; import sys; "
+                  "path=Path(sys.argv[1]); key=sys.argv[2]; value=sys.argv[3]; "
+                  "lines=path.read_text().splitlines(); prefix=key+'='; "
+                  "updated=[prefix+value if line.startswith(prefix) else line for line in lines]; "
+                  "updated.append(prefix+value) if not any(line.startswith(prefix) for line in lines) else None; "
+                  "path.write_text('\\n'.join(updated)+'\\n')"
+              )
+              lines.extend([
+                  f"test -f {quote(app_env)}",
+                  f"python3 -c {quote(update_environment)} {quote(app_env)} "
+                  f"{quote(release_env_var)} {quote(release)}",
+              ])
           if operations_image:
               app_directory = f"/data/apps/{app}"
               lines.extend([

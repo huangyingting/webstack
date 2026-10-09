@@ -166,12 +166,14 @@ jobs:
       app_name: app_a
       operations_dockerfile: Dockerfile.ops
       operations_command: npm run db:migrate && npm run db:seed
+      release_env_var: APP_VERSION
     secrets: inherit
 ```
 
 `operations_dockerfile` 与 `operations_command` 必须同时提供。Operations 容器是临时
 容器，不开放端口；命令失败时 Web 镜像不会切换。迁移本身仍应设计为可重复执行，
-数据库 schema 变更也必须兼容应用回滚。
+数据库 schema 变更也必须兼容应用回滚。`release_env_var` 可选；设置后，workflow
+会在迁移和部署前把不可变镜像标签写入该应用的 `app.env`，用于健康检查和版本追踪。
 
 调用仓库的 **production** Environment 必须配置上述 Azure Variables。执行
 `provision-db` 或 `full-deploy` 时，还必须配置至少 16 字符的
