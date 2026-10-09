@@ -16,3 +16,11 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 acme_email          = "admin@example.com"
 backup_time_zone    = "Asia/Shanghai"
 github_repositories = ["owner/app-a", "owner/app-b"]
+# Repositories using GitHub immutable OIDC subjects must also provide their
+# numeric owner/repository IDs from the repository OIDC settings API.
+github_repository_ids = {
+  "owner/app-a" = {
+    owner_id      = "123456"
+    repository_id = "789012"
+  }
+}

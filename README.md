@@ -211,6 +211,24 @@ helper，不执行 SQL、不重启 PostgreSQL。应用目录和 `app.env` 仍需
 `github_repositories` allowlist，才能获得与其 `production` Environment 绑定的
 OIDC 身份。没有 Environment 审批和 Azure OIDC 授权的仓库无法操作 VM。
 
+2026 年 7 月后创建、重命名或迁移的 GitHub 仓库默认使用不可变 OIDC subject。
+这类仓库还必须在 `github_repository_ids` 提供数字 owner/repository ID：
+
+```hcl
+github_repositories = ["huangyingting/eduloop"]
+github_repository_ids = {
+  "huangyingting/eduloop" = {
+    owner_id      = "24954047"
+    repository_id = "1313246955"
+  }
+}
+```
+
+可从 `GET /repos/OWNER/REPO/actions/oidc/customization/sub` 的
+`sub_claim_prefix` 读取这些 ID。Terraform 会生成形如
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production` 的 federated
+credential；旧仓库未提供 ID 时继续使用名称格式。
+
 输出镜像必须使用 commit SHA 这种不可变标签；不要用 `latest`。对于私有 GHCR 镜像，需要在 VM 上以 root 进行一次 `docker login ghcr.io`：使用有对应包读取权限的账号及 `read:packages` token；不要把 token 放进 Terraform、Run Command 脚本或 GitHub 仓库。Docker 默认凭据文件不是加密保险箱，应保护它，必要时使用 credential helper。公开镜像不需要这一步。
 
 **只有受信任的仓库才能获得部署身份。** 虽然每仓库拥有不同身份、Azure 权限只覆盖这台 VM，但 Run Command 在机内以 root 执行，因此不是“只允许控制自己 app”的权限隔离。它也能间接使用 VM 的备份身份。互不信任的项目应该使用不同虚机，不能仅靠 Compose 隔离。

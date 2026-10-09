@@ -440,7 +440,13 @@ resource "azurerm_federated_identity_credential" "github" {
   user_assigned_identity_id = azurerm_user_assigned_identity.github[each.key].id
   audience                  = ["api://AzureADTokenExchange"]
   issuer                    = "https://token.actions.githubusercontent.com"
-  subject                   = "repo:${each.key}:environment:production"
+  subject = contains(keys(var.github_repository_ids), each.key) ? format(
+    "repo:%s@%s/%s@%s:environment:production",
+    split("/", each.key)[0],
+    var.github_repository_ids[each.key].owner_id,
+    split("/", each.key)[1],
+    var.github_repository_ids[each.key].repository_id,
+  ) : "repo:${each.key}:environment:production"
 }
 
 resource "azurerm_role_definition" "github" {

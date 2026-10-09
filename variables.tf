@@ -161,3 +161,21 @@ variable "github_repositories" {
     error_message = "Supply at most 20 lowercase owner/repo names."
   }
 }
+
+variable "github_repository_ids" {
+  type = map(object({
+    owner_id      = string
+    repository_id = string
+  }))
+  default     = {}
+  description = "Immutable GitHub owner/repository IDs keyed by an entry in github_repositories."
+  validation {
+    condition = alltrue([
+      for repo, ids in var.github_repository_ids :
+      contains(var.github_repositories, repo) &&
+      can(regex("^[1-9][0-9]*$", ids.owner_id)) &&
+      can(regex("^[1-9][0-9]*$", ids.repository_id))
+    ])
+    error_message = "Each github_repository_ids key must be allowlisted and contain numeric owner_id and repository_id values."
+  }
+}

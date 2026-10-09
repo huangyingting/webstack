@@ -8,6 +8,12 @@ variables {
   acme_email          = "admin@example.com"
   ssh_public_key_path = "tests/test-key.pub"
   github_repositories = ["owner/app-a", "owner/app-b"]
+  github_repository_ids = {
+    "owner/app-a" = {
+      owner_id      = "123456"
+      repository_id = "789012"
+    }
+  }
 }
 
 run "infrastructure_contract" {
@@ -97,8 +103,12 @@ run "infrastructure_contract" {
     error_message = "Each repository must have a separate deployment identity."
   }
   assert {
-    condition     = azurerm_federated_identity_credential.github["owner/app-a"].subject == "repo:owner/app-a:environment:production"
-    error_message = "GitHub identity must be bound to the production environment."
+    condition     = azurerm_federated_identity_credential.github["owner/app-a"].subject == "repo:owner@123456/app-a@789012:environment:production"
+    error_message = "Immutable GitHub repositories must use numeric owner and repository IDs."
+  }
+  assert {
+    condition     = azurerm_federated_identity_credential.github["owner/app-b"].subject == "repo:owner/app-b:environment:production"
+    error_message = "Repositories without immutable IDs must retain the legacy subject format."
   }
 }
 
