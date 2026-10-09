@@ -147,6 +147,7 @@ jobs:
     with:
       mode: deploy-webapp
       app_name: app_a
+      ref: ${{ github.event.workflow_run.head_sha }}
       # 留空 image 会构建调用仓库的 Dockerfile；也可传不可变 GHCR 标签。
     secrets: inherit
 ```
