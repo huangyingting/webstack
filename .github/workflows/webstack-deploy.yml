@@ -298,7 +298,6 @@ jobs:
           fi
 
           cleanup() {
-            local cleanup_script
             set +e
             if [[ -n "$BLOB_NAME" && -n "$STORAGE_ACCOUNT" && -n "$STORAGE_CONTAINER" \
                 && -n "$SSH_TARGET" ]]; then
@@ -544,6 +543,7 @@ jobs:
           chmod 0700 "$RUNNER_TEMP/webstack-ops.sh"
 
           if [[ -n "$BLOB_NAME" ]]; then
+            # shellcheck disable=SC2024 # The runner reads the local script; sudo applies to ssh.
             sudo ssh -S "$RUNNER_TEMP/tunnel-control" "$SSH_TARGET" \
               'sudo -n bash -s' < "$RUNNER_TEMP/webstack-ops.sh" \
               | tee "$RUNNER_TEMP/remote-output.txt"
