@@ -4,7 +4,7 @@ mock_provider "cloudinit" {}
 variables {
   subscription_id     = "00000000-0000-0000-0000-000000000001"
   prefix              = "testapps"
-  admin_cidr          = "203.0.113.10/32"
+  admin_cidr          = "0.0.0.0/0"
   acme_email          = "admin@example.com"
   ssh_public_key_path = "tests/test-key.pub"
   github_repositories = ["owner/app-a", "owner/app-b"]
@@ -51,14 +51,14 @@ run "infrastructure_contract" {
   }
   assert {
     condition = (
-      azurerm_network_security_rule.ssh.source_address_prefix == "203.0.113.10/32" &&
+      azurerm_network_security_rule.ssh.source_address_prefix == "0.0.0.0/0" &&
       azurerm_network_security_rule.ssh.destination_port_range == "22222" &&
       azurerm_network_security_rule.web.destination_port_ranges == toset(["80", "443"]) &&
       azurerm_network_security_rule.subnet_ssh.destination_port_range == "22222" &&
       azurerm_network_security_rule.subnet_web.destination_port_ranges == toset(["80", "443"]) &&
       azurerm_network_security_rule.deny_other.access == "Deny"
     )
-    error_message = "Only explicit web and trusted SSH ingress are permitted."
+    error_message = "Only explicit web and SSH ingress are permitted."
   }
   assert {
     condition = alltrue([

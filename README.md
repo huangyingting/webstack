@@ -59,8 +59,9 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 ssh -p 22222 azadmin@PUBLIC_IP
 ```
 
-同一 NSG 同时关联到应用子网和 VM NIC；两层都仅开放公网 HTTP `80`、HTTPS `443`
-以及来自 `admin_cidr` 的 SSH `22222`，其他入站流量显式拒绝。
+同一 NSG 同时关联到应用子网和 VM NIC；两层都开放公网 HTTP `80`、HTTPS `443`
+以及 `admin_cidr` 指定的 SSH `22222`，其他入站流量显式拒绝。当前配置使用
+`0.0.0.0/0`，因此 SSH `22222` 对所有 IPv4 地址开放；生产环境建议改回固定 `/32`。
 
 默认 `data_disk_count = 4`、`data_disk_size_gb = 32`，总容量为 128GB。修改磁盘数量或缩小磁盘不是在线安全操作；已有数据时应新建阵列并迁移，而不是直接修改这些值。
 

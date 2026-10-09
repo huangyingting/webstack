@@ -110,10 +110,10 @@ variable "ssh_public_key" {
 
 variable "admin_cidr" {
   type        = string
-  description = "Trusted IPv4 CIDR allowed to use SSH, usually your public IP /32."
+  description = "IPv4 CIDR allowed to use SSH; 0.0.0.0/0 permits SSH from all IPv4 addresses."
   validation {
-    condition     = can(cidrnetmask(var.admin_cidr)) && var.admin_cidr != "0.0.0.0/0"
-    error_message = "Supply a valid IPv4 CIDR; world-open SSH is not permitted."
+    condition     = can(cidrnetmask(var.admin_cidr))
+    error_message = "Supply a valid IPv4 CIDR such as 203.0.113.10/32 or 0.0.0.0/0."
   }
 }
 

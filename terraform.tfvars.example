@@ -6,7 +6,7 @@ vm_name             = "myapps-vm"
 disk_size_gb        = 64
 data_disk_count     = 4
 data_disk_size_gb   = 32
-admin_cidr          = "203.0.113.10/32"
+admin_cidr          = "0.0.0.0/0"
 admin_username      = "azadmin"
 ssh_port            = 22222
 # Set ssh_public_key directly, or omit it to read ssh_public_key_path.
