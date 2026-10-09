@@ -127,6 +127,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: read
 
 jobs:
   build:
@@ -210,6 +211,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -238,6 +240,8 @@ jobs:
           RELEASE_ENV_VAR: ${{ inputs.release_env_var }}
           DATABASE_URL_QUERY: ${{ inputs.database_url_query }}
           APPLICATION_ENV: ${{ secrets.APPLICATION_ENV }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           VM_NAME: ${{ vars.AZURE_VM_NAME }}
         run: |
@@ -530,6 +534,8 @@ jobs:
           release_env_var = os.environ["RELEASE_ENV_VAR"]
           database_url_query = os.environ["DATABASE_URL_QUERY"]
           application_env = os.environ["APPLICATION_ENV"]
+          registry_user = os.environ["REGISTRY_USER"]
+          registry_token = os.environ["REGISTRY_TOKEN"]
           def quote(value):
               return shlex.quote(value)
 
@@ -539,8 +545,17 @@ jobs:
               "set -Eeuo pipefail",
               "umask 077",
               f"seed=/tmp/webstack-seed-$$.sql{'.gz' if compressed else ''}",
-              "trap 'rm -f -- \"$seed\"' EXIT",
+              "docker_config=/tmp/webstack-docker-$$",
+              "trap 'rm -f -- \"$seed\"; rm -rf -- \"$docker_config\"' EXIT",
           ]
+          if registry_token:
+              lines.extend([
+                  'install -d -m 0700 "$docker_config"',
+                  'export DOCKER_CONFIG="$docker_config"',
+                  f"printf %s {quote(registry_token)} | "
+                  f"docker login ghcr.io --username {quote(registry_user)} "
+                  "--password-stdin >/dev/null",
+              ])
           if sql_path and not blob_name:
               encoded = base64.b64encode(Path(sql_path).read_bytes()).decode()
               lines.append(f"printf %s {quote(encoded)} | base64 -d > \"$seed\"")

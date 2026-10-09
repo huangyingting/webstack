@@ -233,7 +233,10 @@ map key 保持小写以稳定现有 identity 地址；`owner` 和 `repository` �
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production` 的 federated
 credential；旧仓库未提供 ID 时继续使用名称格式。
 
-输出镜像必须使用 commit SHA 这种不可变标签；不要用 `latest`。对于私有 GHCR 镜像，需要在 VM 上以 root 进行一次 `docker login ghcr.io`：使用有对应包读取权限的账号及 `read:packages` token；不要把 token 放进 Terraform、Run Command 脚本或 GitHub 仓库。Docker 默认凭据文件不是加密保险箱，应保护它，必要时使用 credential helper。公开镜像不需要这一步。
+输出镜像必须使用 commit SHA 这种不可变标签；不要用 `latest`。Reusable workflow
+使用调用任务短期有效的 `GITHUB_TOKEN` 和独立临时 `DOCKER_CONFIG` 拉取私有 GHCR
+镜像，远程操作结束即删除，不在 VM 保存长期 registry 凭据。调用 workflow 必须授予
+`packages: write`（包含读取权限）；package 也必须关联调用仓库并允许 Actions 访问。
 
 **只有受信任的仓库才能获得部署身份。** 虽然每仓库拥有不同身份、Azure 权限只覆盖这台 VM，但 Run Command 在机内以 root 执行，因此不是“只允许控制自己 app”的权限隔离。它也能间接使用 VM 的备份身份。互不信任的项目应该使用不同虚机，不能仅靠 Compose 隔离。
 
