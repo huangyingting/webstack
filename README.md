@@ -218,6 +218,8 @@ OIDC 身份。没有 Environment 审批和 Azure OIDC 授权的仓库无法操�
 github_repositories = ["huangyingting/eduloop"]
 github_repository_ids = {
   "huangyingting/eduloop" = {
+    owner         = "huangyingting"
+    repository    = "EduLoop"
     owner_id      = "24954047"
     repository_id = "1313246955"
   }
@@ -225,7 +227,9 @@ github_repository_ids = {
 ```
 
 可从 `GET /repos/OWNER/REPO/actions/oidc/customization/sub` 的
-`sub_claim_prefix` 读取这些 ID。Terraform 会生成形如
+`sub_claim_prefix` 读取这些 ID 和大小写敏感的 canonical owner/repository 名称。
+map key 保持小写以稳定现有 identity 地址；`owner` 和 `repository` 必须匹配 GitHub
+实际大小写。Terraform 会生成形如
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production` 的 federated
 credential；旧仓库未提供 ID 时继续使用名称格式。
 

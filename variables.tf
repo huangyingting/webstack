@@ -164,6 +164,8 @@ variable "github_repositories" {
 
 variable "github_repository_ids" {
   type = map(object({
+    owner         = optional(string)
+    repository    = optional(string)
     owner_id      = string
     repository_id = string
   }))
@@ -173,9 +175,11 @@ variable "github_repository_ids" {
     condition = alltrue([
       for repo, ids in var.github_repository_ids :
       contains(var.github_repositories, repo) &&
+      (ids.owner == null || can(regex("^[A-Za-z0-9_.-]+$", ids.owner))) &&
+      (ids.repository == null || can(regex("^[A-Za-z0-9_.-]+$", ids.repository))) &&
       can(regex("^[1-9][0-9]*$", ids.owner_id)) &&
       can(regex("^[1-9][0-9]*$", ids.repository_id))
     ])
-    error_message = "Each github_repository_ids key must be allowlisted and contain numeric owner_id and repository_id values."
+    error_message = "Each github_repository_ids key must be allowlisted and contain valid canonical names plus numeric owner_id and repository_id values."
   }
 }

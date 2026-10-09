@@ -20,6 +20,8 @@ github_repositories = ["owner/app-a", "owner/app-b"]
 # numeric owner/repository IDs from the repository OIDC settings API.
 github_repository_ids = {
   "owner/app-a" = {
+    owner         = "Owner"
+    repository    = "App-A"
     owner_id      = "123456"
     repository_id = "789012"
   }
