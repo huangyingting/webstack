@@ -93,6 +93,10 @@ assert "docker run --rm --network webstack-apps" in run_script
 assert "WEBSTACK_APP_OPERATION_OK" in run_script
 assert "release_env_var must be an uppercase environment variable name" in run_script
 assert "if release_env_var:" in run_script
+assert "/usr/local/sbin/webstack-create-app" in run_script
+assert "APPLICATION_ENV must not define reserved variable" in run_script
+assert "Existing app configuration does not match workflow inputs" in run_script
+assert "database_url_query contains unsupported characters" in run_script
 assert "messages.splitlines()" in run_script
 assert "generate-sas" not in run_script
 assert "sql_blob_url" not in run_script

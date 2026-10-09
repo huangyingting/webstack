@@ -147,10 +147,22 @@ jobs:
     with:
       mode: deploy-webapp
       app_name: app_a
+      app_domain: app-a.example.com
+      container_port: 3000
+      host_port: 10001
       ref: ${{ github.event.workflow_run.head_sha }}
       # 留空 image 会构建调用仓库的 Dockerfile；也可传不可变 GHCR 标签。
-    secrets: inherit
+      database_url_query: sslmode=require&connection_limit=8
+    secrets:
+      APPLICATION_ENV: ${{ secrets.APPLICATION_ENV }}
 ```
+
+提供 `app_domain`、`container_port` 和 `host_port` 后，如果应用尚不存在，workflow 会先
+调用 `webstack-create-app`，原子创建独立 PostgreSQL 数据库/角色、root-only
+`app.env`、Compose 服务和 Caddy 路由；三项必须同时提供。应用已存在时，workflow
+会核对这些不可变参数，拒绝意外改绑域名或端口。可选的 `APPLICATION_ENV` secret
+以 `KEY=VALUE` 行合并到 `app.env`，但不能覆盖数据库凭据或发布版本。
+`database_url_query` 用于为生成的 `DATABASE_URL` 增加应用需要的 TLS、schema 和连接池参数。
 
 需要在切换 Web 镜像前执行 Prisma、Drizzle、Rails 等应用级迁移时，可提供一个调用
 仓库内的 operations Dockerfile 和命令。Workflow 会构建独立的不可变 operations

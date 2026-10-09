@@ -17,6 +17,20 @@ on:
         description: App name on the VM (required for deploy-webapp and full-deploy)
         required: false
         default: app_a
+      app_domain:
+        description: Domain used to create the app when it does not exist
+        required: false
+        default: ""
+      container_port:
+        description: Container port used when creating the app
+        type: number
+        required: false
+        default: 0
+      host_port:
+        description: Loopback host port used when creating the app
+        type: number
+        required: false
+        default: 0
       database_name:
         description: Database name (required for provision-db and inject-data/full-deploy)
         required: false
@@ -37,18 +51,6 @@ on:
         description: Caller Git ref to check out and build
         required: false
         default: ""
-      operations_dockerfile:
-        description: Optional Dockerfile for application migrations or seed operations
-        required: false
-        default: ""
-      operations_command:
-        description: Command to run in the operations image before deploying the webapp
-        required: false
-        default: ""
-      release_env_var:
-        description: Optional app.env variable populated from the immutable image tag
-        required: false
-        default: ""
   workflow_call:
     inputs:
       mode:
@@ -59,6 +61,18 @@ on:
         type: string
         required: false
         default: ""
+      app_domain:
+        type: string
+        required: false
+        default: ""
+      container_port:
+        type: number
+        required: false
+        default: 0
+      host_port:
+        type: number
+        required: false
+        default: 0
       image:
         description: Existing immutable GHCR image; leave empty to build the caller repository
         type: string
@@ -97,9 +111,17 @@ on:
         type: string
         required: false
         default: ""
+      database_url_query:
+        description: Query parameters merged into the generated DATABASE_URL
+        type: string
+        required: false
+        default: ""
     secrets:
       DATABASE_PASSWORD:
         description: Required by provision-db and full-deploy
+        required: false
+      APPLICATION_ENV:
+        description: Optional KEY=VALUE lines merged into the root-only application environment
         required: false
 
 permissions:
@@ -202,6 +224,9 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           APP_NAME: ${{ inputs.app_name != '' && inputs.app_name || vars.APP_NAME }}
+          APP_DOMAIN: ${{ inputs.app_domain }}
+          CONTAINER_PORT: ${{ inputs.container_port }}
+          HOST_PORT: ${{ inputs.host_port }}
           IMAGE: ${{ inputs.image != '' && inputs.image || needs.build.outputs.image }}
           DB_NAME: ${{ inputs.database_name }}
           DB_USER: ${{ inputs.database_user }}
@@ -211,6 +236,8 @@ jobs:
           OPERATIONS_COMMAND: ${{ inputs.operations_command }}
           OPERATIONS_IMAGE: ${{ needs.build-operations.outputs.image }}
           RELEASE_ENV_VAR: ${{ inputs.release_env_var }}
+          DATABASE_URL_QUERY: ${{ inputs.database_url_query }}
+          APPLICATION_ENV: ${{ secrets.APPLICATION_ENV }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           VM_NAME: ${{ vars.AZURE_VM_NAME }}
         run: |
@@ -244,6 +271,29 @@ jobs:
           fi
           if [[ -n "$RELEASE_ENV_VAR" && ! "$RELEASE_ENV_VAR" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
             echo "release_env_var must be an uppercase environment variable name" >&2
+            exit 1
+          fi
+          if [[ -n "$APP_DOMAIN" || "$CONTAINER_PORT" != 0 || "$HOST_PORT" != 0 ]]; then
+            [[ "$MODE" == deploy-webapp || "$MODE" == full-deploy ]] || {
+              echo "App provisioning inputs are only supported for deploy-webapp and full-deploy" >&2
+              exit 1
+            }
+            [[ "$APP_DOMAIN" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || {
+              echo "app_domain must be a lowercase public DNS hostname" >&2
+              exit 1
+            }
+            ((CONTAINER_PORT >= 1 && CONTAINER_PORT <= 65535)) || {
+              echo "container_port must be from 1 through 65535" >&2
+              exit 1
+            }
+            ((HOST_PORT >= 1024 && HOST_PORT <= 65535)) || {
+              echo "host_port must be from 1024 through 65535" >&2
+              exit 1
+            }
+          fi
+          database_query_pattern='^[A-Za-z0-9._~%=&+-]+$'
+          if [[ -n "$DATABASE_URL_QUERY" && ! "$DATABASE_URL_QUERY" =~ $database_query_pattern ]]; then
+            echo "database_url_query contains unsupported characters" >&2
             exit 1
           fi
           case "$MODE" in
@@ -468,6 +518,9 @@ jobs:
           output, sql_path, blob_name, blob_sha256, storage_account, storage_container = sys.argv[1:]
           mode = os.environ["MODE"]
           app = os.environ["APP_NAME"]
+          app_domain = os.environ["APP_DOMAIN"]
+          container_port = os.environ["CONTAINER_PORT"]
+          host_port = os.environ["HOST_PORT"]
           image = os.environ["IMAGE"]
           database = os.environ["DB_NAME"]
           user = os.environ["DB_USER"]
@@ -475,6 +528,8 @@ jobs:
           operations_image = os.environ["OPERATIONS_IMAGE"]
           operations_command = os.environ["OPERATIONS_COMMAND"]
           release_env_var = os.environ["RELEASE_ENV_VAR"]
+          database_url_query = os.environ["DATABASE_URL_QUERY"]
+          application_env = os.environ["APPLICATION_ENV"]
           def quote(value):
               return shlex.quote(value)
 
@@ -505,6 +560,81 @@ jobs:
                   lines.append(
                       f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
                       '--sql-file "$seed"'
+                  )
+          if mode in ("deploy-webapp", "full-deploy"):
+              app_directory = f"/data/apps/{app}"
+              if app_domain:
+                  lines.extend([
+                      f"if [[ ! -d {quote(app_directory)} ]]; then",
+                      f"  /usr/local/sbin/webstack-create-app {quote(app)} "
+                      f"{quote(app_domain)} --container-port {quote(container_port)} "
+                      f"--host-port {quote(host_port)}",
+                      "fi",
+                  ])
+                  verify_app = (
+                      "import json,sys; d=json.load(open(sys.argv[1])); "
+                      "expected={'app':sys.argv[2],'domain':sys.argv[3],"
+                      "'container_port':int(sys.argv[4]),'host_port':int(sys.argv[5])}; "
+                      "actual={k:d.get(k) for k in expected}; "
+                      "sys.exit(0 if actual == expected else "
+                      "'Existing app configuration does not match workflow inputs')"
+                  )
+                  lines.append(
+                      f"python3 -c {quote(verify_app)} "
+                      f"{quote(app_directory + '/app.json')} {quote(app)} "
+                      f"{quote(app_domain)} {quote(container_port)} {quote(host_port)}"
+                  )
+              lines.append(f"test -f {quote(app_directory + '/app.env')}")
+              if application_env or database_url_query:
+                  import base64
+                  encoded_environment = base64.b64encode(
+                      application_env.encode()
+                  ).decode()
+                  merge_environment = """
+          import base64
+          from pathlib import Path
+          import re
+          import sys
+          from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+          path = Path(sys.argv[1])
+          incoming = base64.b64decode(sys.argv[2]).decode()
+          database_query = sys.argv[3]
+          values = {}
+          for raw in path.read_text().splitlines():
+              if not raw or raw.lstrip().startswith("#"):
+                  continue
+              key, separator, value = raw.partition("=")
+              if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                  raise SystemExit("Existing app.env contains an invalid line")
+              values[key] = value
+          reserved = {
+              "APP_VERSION", "DATABASE_URL", "PGDATABASE", "PGHOST",
+              "PGPASSWORD", "PGPORT", "PGUSER",
+          }
+          for raw in incoming.splitlines():
+              line = raw.strip()
+              if not line or line.startswith("#"):
+                  continue
+              key, separator, value = line.partition("=")
+              if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                  raise SystemExit("APPLICATION_ENV contains an invalid line")
+              if key in reserved:
+                  raise SystemExit(f"APPLICATION_ENV must not define reserved variable {key}")
+              values[key] = value
+          if database_query:
+              url = urlsplit(values["DATABASE_URL"])
+              query = dict(parse_qsl(url.query, keep_blank_values=True))
+              query.update(parse_qsl(database_query, keep_blank_values=True))
+              values["DATABASE_URL"] = urlunsplit(
+                  (url.scheme, url.netloc, url.path, urlencode(query), url.fragment)
+              )
+          path.write_text("".join(f"{key}={value}\\n" for key, value in values.items()))
+          """
+                  lines.append(
+                      f"python3 -c {quote(merge_environment)} "
+                      f"{quote(app_directory + '/app.env')} "
+                      f"{quote(encoded_environment)} {quote(database_url_query)}"
                   )
           if release_env_var:
               app_env = f"/data/apps/{app}/app.env"
