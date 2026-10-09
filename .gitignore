@@ -1,0 +1,15 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+.deploy.tfplan
+.deployment/
+__pycache__/
+.venv/
+*.pyc
+*.env
+*.pem
+*.key
+crash.log
+crash.*.log
