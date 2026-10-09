@@ -33,6 +33,14 @@ on:
         description: Existing immutable GHCR image; leave empty to build this repository
         required: false
         default: ""
+      operations_dockerfile:
+        description: Optional Dockerfile for application migrations or seed operations
+        required: false
+        default: ""
+      operations_command:
+        description: Command to run in the operations image before deploying the webapp
+        required: false
+        default: ""
   workflow_call:
     inputs:
       mode:
@@ -58,6 +66,16 @@ on:
         default: ""
       sql_file:
         description: SQL or SQL.GZ path in the caller repository
+        type: string
+        required: false
+        default: ""
+      operations_dockerfile:
+        description: Optional Dockerfile for application migrations or seed operations
+        type: string
+        required: false
+        default: ""
+      operations_command:
+        description: Command to run in the operations image before deploying the webapp
         type: string
         required: false
         default: ""
@@ -102,9 +120,46 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  build-operations:
+    if: ${{ (inputs.mode == 'deploy-webapp' || inputs.mode == 'full-deploy') && inputs.operations_dockerfile != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine operations image tag
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}-ops:${COMMIT}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.operations_dockerfile }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.image.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
-    needs: build
-    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    needs: [build, build-operations]
+    if: >-
+      ${{
+        always()
+        && (needs.build.result == 'success' || needs.build.result == 'skipped')
+        && (needs.build-operations.result == 'success' || needs.build-operations.result == 'skipped')
+      }}
     runs-on: ubuntu-latest
     concurrency:
       group: webstack-${{ inputs.app_name != '' && inputs.app_name || inputs.database_name }}
@@ -130,6 +185,9 @@ jobs:
           DB_USER: ${{ inputs.database_user }}
           DB_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
           SQL_FILE: ${{ inputs.sql_file }}
+          OPERATIONS_DOCKERFILE: ${{ inputs.operations_dockerfile }}
+          OPERATIONS_COMMAND: ${{ inputs.operations_command }}
+          OPERATIONS_IMAGE: ${{ needs.build-operations.outputs.image }}
           RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           VM_NAME: ${{ vars.AZURE_VM_NAME }}
         run: |
@@ -146,6 +204,21 @@ jobs:
           SSH_TARGET=""
           SSH_PORT=""
           HOSTS_MARKER=""
+          [[ -z "$OPERATIONS_DOCKERFILE" && -z "$OPERATIONS_COMMAND" \
+              || -n "$OPERATIONS_DOCKERFILE" && -n "$OPERATIONS_COMMAND" ]] || {
+            echo "operations_dockerfile and operations_command must be supplied together" >&2
+            exit 1
+          }
+          if [[ -n "$OPERATIONS_DOCKERFILE" ]]; then
+            [[ "$MODE" == deploy-webapp || "$MODE" == full-deploy ]] || {
+              echo "Application operations are only supported for deploy-webapp and full-deploy" >&2
+              exit 1
+            }
+            [[ "$OPERATIONS_IMAGE" =~ ^ghcr\.io/[a-z0-9._/-]+:[a-f0-9]{40}$ ]] || {
+              echo "The operations image must use an immutable commit tag" >&2
+              exit 1
+            }
+          fi
           case "$MODE" in
             provision-db)
               [[ -n "$DB_NAME" && -n "$DB_USER" && -n "$DB_PASSWORD" ]] || {
@@ -373,6 +446,8 @@ jobs:
           database = os.environ["DB_NAME"]
           user = os.environ["DB_USER"]
           password = os.environ["DB_PASSWORD"]
+          operations_image = os.environ["OPERATIONS_IMAGE"]
+          operations_command = os.environ["OPERATIONS_COMMAND"]
           def quote(value):
               return shlex.quote(value)
 
@@ -404,6 +479,16 @@ jobs:
                       f"/usr/local/sbin/webstack-db inject --db {quote(database)} "
                       '--sql-file "$seed"'
                   )
+          if operations_image:
+              app_directory = f"/data/apps/{app}"
+              lines.extend([
+                  f"test -f {quote(app_directory + '/app.env')}",
+                  f"docker pull {quote(operations_image)}",
+                  "docker run --rm --network webstack-apps "
+                  f"--env-file {quote(app_directory + '/app.env')} "
+                  f"{quote(operations_image)} sh -lc {quote(operations_command)}",
+                  f"printf '%s\\n' {quote('WEBSTACK_APP_OPERATION_OK ' + app)}",
+              ])
           if mode in ("deploy-webapp", "full-deploy"):
               lines.append(
                   f"/usr/local/sbin/webstack-db deploy --app {quote(app)} --image {quote(image)}"

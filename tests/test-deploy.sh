@@ -88,6 +88,9 @@ assert deploy["environment"] == "production"
 assert deploy["steps"][0]["uses"].startswith("actions/checkout@")
 run_script = deploy["steps"][-1]["run"]
 assert 'EXPECTED_MARKER="WEBSTACK_FULL_DEPLOY_OK $APP_NAME"' in run_script
+assert "operations_dockerfile and operations_command must be supplied together" in run_script
+assert "docker run --rm --network webstack-apps" in run_script
+assert "WEBSTACK_APP_OPERATION_OK" in run_script
 assert "messages.splitlines()" in run_script
 assert "generate-sas" not in run_script
 assert "sql_blob_url" not in run_script
@@ -98,6 +101,9 @@ assert "/usr/local/sbin/webstack-db inject-blob" in run_script
 assert 'BLOB_SHA256="$(sha256sum' in run_script
 generator = run_script[run_script.index('if mode in ("provision-db", "full-deploy"):'):]
 assert generator.index("/usr/local/sbin/webstack-db inject") < generator.index(
+    "if operations_image:"
+)
+assert generator.index("if operations_image:") < generator.index(
     "/usr/local/sbin/webstack-db deploy"
 )
 assert generator.index("/usr/local/sbin/webstack-db deploy") < generator.index(

@@ -151,6 +151,27 @@ jobs:
     secrets: inherit
 ```
 
+需要在切换 Web 镜像前执行 Prisma、Drizzle、Rails 等应用级迁移时，可提供一个调用
+仓库内的 operations Dockerfile 和命令。Workflow 会构建独立的不可变 operations
+镜像，在 `webstack-apps` 网络中读取该应用 root-only 的 `app.env` 执行命令，成功后
+才部署 Web 镜像：
+
+```yaml
+jobs:
+  deploy:
+    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@main
+    with:
+      mode: deploy-webapp
+      app_name: app_a
+      operations_dockerfile: Dockerfile.ops
+      operations_command: npm run db:migrate && npm run db:seed
+    secrets: inherit
+```
+
+`operations_dockerfile` 与 `operations_command` 必须同时提供。Operations 容器是临时
+容器，不开放端口；命令失败时 Web 镜像不会切换。迁移本身仍应设计为可重复执行，
+数据库 schema 变更也必须兼容应用回滚。
+
 调用仓库的 **production** Environment 必须配置上述 Azure Variables。执行
 `provision-db` 或 `full-deploy` 时，还必须配置至少 16 字符的
 `DATABASE_PASSWORD` Environment secret；密码不是普通 workflow input，不会显示在
