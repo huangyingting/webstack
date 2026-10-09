@@ -7,6 +7,8 @@ disk_size_gb        = 64
 data_disk_count     = 4
 data_disk_size_gb   = 32
 admin_cidr          = "203.0.113.10/32"
+admin_username      = "azadmin"
+ssh_port            = 22222
 # Set ssh_public_key directly, or omit it to read ssh_public_key_path.
 # ssh_public_key      = "ssh-ed25519 AAAAC3... admin@example.com"
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"

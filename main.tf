@@ -14,6 +14,8 @@ locals {
     time_zone          = var.backup_time_zone
     acme_email         = var.acme_email
     data_disk_count    = var.data_disk_count
+    ssh_port           = var.ssh_port
+    admin_username     = var.admin_username
   }
   host_files = [
     { source = "backup.py", destination = "/usr/local/sbin/webstack-backup" },
@@ -143,6 +145,13 @@ resource "azurerm_network_security_group" "apps" {
   tags                = local.tags
 }
 
+resource "azurerm_network_security_group" "subnet" {
+  name                = "${var.prefix}-vnet-apps-nsg-${var.location}"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.apps.name
+  tags                = local.tags
+}
+
 resource "azurerm_network_security_rule" "web" {
   name                        = "web"
   priority                    = 100
@@ -164,7 +173,7 @@ resource "azurerm_network_security_rule" "ssh" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = "22"
+  destination_port_range      = tostring(var.ssh_port)
   source_address_prefix       = var.admin_cidr
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.apps.name
@@ -183,6 +192,48 @@ resource "azurerm_network_security_rule" "deny_other" {
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.apps.name
   network_security_group_name = azurerm_network_security_group.apps.name
+}
+
+resource "azurerm_network_security_rule" "subnet_web" {
+  name                        = "web"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_ranges     = ["80", "443"]
+  source_address_prefix       = "Internet"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.apps.name
+  network_security_group_name = azurerm_network_security_group.subnet.name
+}
+
+resource "azurerm_network_security_rule" "subnet_ssh" {
+  name                        = "admin-ssh"
+  priority                    = 110
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = tostring(var.ssh_port)
+  source_address_prefix       = var.admin_cidr
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.apps.name
+  network_security_group_name = azurerm_network_security_group.subnet.name
+}
+
+resource "azurerm_network_security_rule" "subnet_deny_other" {
+  name                        = "deny-other-inbound"
+  priority                    = 120
+  direction                   = "Inbound"
+  access                      = "Deny"
+  protocol                    = "*"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.apps.name
+  network_security_group_name = azurerm_network_security_group.subnet.name
 }
 
 resource "azurerm_public_ip" "apps" {
@@ -214,6 +265,11 @@ resource "azurerm_network_interface" "apps" {
 resource "azurerm_network_interface_security_group_association" "apps" {
   network_interface_id      = azurerm_network_interface.apps.id
   network_security_group_id = azurerm_network_security_group.apps.id
+}
+
+resource "azurerm_subnet_network_security_group_association" "apps" {
+  subnet_id                 = azurerm_subnet.apps.id
+  network_security_group_id = azurerm_network_security_group.subnet.id
 }
 
 resource "azurerm_private_endpoint" "blob" {
@@ -311,15 +367,25 @@ resource "azurerm_linux_virtual_machine" "apps" {
   depends_on = [
     azurerm_role_assignment.backup,
     azurerm_network_interface_security_group_association.apps,
+    azurerm_subnet_network_security_group_association.apps,
     azurerm_network_security_rule.web,
     azurerm_network_security_rule.ssh,
     azurerm_network_security_rule.deny_other,
+    azurerm_network_security_rule.subnet_web,
+    azurerm_network_security_rule.subnet_ssh,
+    azurerm_network_security_rule.subnet_deny_other,
   ]
 
   lifecycle {
     prevent_destroy = true
     # Host configuration updates must never replace a VM containing PostgreSQL.
-    ignore_changes = [custom_data, source_image_reference]
+    ignore_changes = [
+      admin_username,
+      admin_ssh_key,
+      bypass_platform_safety_checks_on_user_schedule_enabled,
+      custom_data,
+      source_image_reference,
+    ]
   }
 }
 

@@ -26,6 +26,10 @@ run "infrastructure_contract" {
     error_message = "The VM name must default from the deployment prefix."
   }
   assert {
+    condition     = azurerm_linux_virtual_machine.apps.admin_username == "azadmin"
+    error_message = "The default Linux administrator must be azadmin."
+  }
+  assert {
     condition = (
       length(azurerm_managed_disk.data) == 4 &&
       alltrue([for disk in azurerm_managed_disk.data : disk.disk_size_gb == 32]) &&
@@ -46,7 +50,14 @@ run "infrastructure_contract" {
     error_message = "Backups must be in a separate resource group."
   }
   assert {
-    condition     = azurerm_network_security_rule.ssh.source_address_prefix == "203.0.113.10/32" && azurerm_network_security_rule.deny_other.access == "Deny"
+    condition = (
+      azurerm_network_security_rule.ssh.source_address_prefix == "203.0.113.10/32" &&
+      azurerm_network_security_rule.ssh.destination_port_range == "22222" &&
+      azurerm_network_security_rule.web.destination_port_ranges == toset(["80", "443"]) &&
+      azurerm_network_security_rule.subnet_ssh.destination_port_range == "22222" &&
+      azurerm_network_security_rule.subnet_web.destination_port_ranges == toset(["80", "443"]) &&
+      azurerm_network_security_rule.deny_other.access == "Deny"
+    )
     error_message = "Only explicit web and trusted SSH ingress are permitted."
   }
   assert {

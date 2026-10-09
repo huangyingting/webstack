@@ -19,7 +19,49 @@ install -d -m 0700 /var/lib/webstack-backup
 rm -f /etc/apt/sources.list.d/caddy.list
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl gnupg python3 tzdata postgresql postgresql-contrib \
-    gzip openssl iptables unattended-upgrades mdadm rsync
+    gzip openssl iptables unattended-upgrades mdadm openssh-server rsync
+
+ssh_port=$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+value = json.loads(Path("/etc/webstack/config.json").read_text())["ssh_port"]
+if not isinstance(value, int) or not 1024 <= value <= 65535:
+    raise SystemExit("Invalid ssh_port in host configuration")
+print(value)
+PY
+)
+admin_username=$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+value = json.loads(Path("/etc/webstack/config.json").read_text())["admin_username"]
+import re
+if not isinstance(value, str) or not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", value) or value == "root":
+    raise SystemExit("Invalid admin_username in host configuration")
+print(value)
+PY
+)
+if ! id "$admin_username" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash --groups sudo "$admin_username"
+fi
+install -d -m 0700 -o "$admin_username" -g "$admin_username" "/home/$admin_username/.ssh"
+if [[ -s /home/azureadmin/.ssh/authorized_keys && ! -s "/home/$admin_username/.ssh/authorized_keys" ]]; then
+    install -m 0600 -o "$admin_username" -g "$admin_username" \
+        /home/azureadmin/.ssh/authorized_keys "/home/$admin_username/.ssh/authorized_keys"
+fi
+install -d -m 0755 /etc/ssh/sshd_config.d /run/sshd
+cat > /etc/ssh/sshd_config.d/99-webstack.conf <<EOF
+Port $ssh_port
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOF
+sshd -t
+systemctl disable --now ssh.socket 2>/dev/null || true
+systemctl enable ssh.service
+systemctl restart ssh.service
+ss -H -ltn "sport = :$ssh_port" | grep -q .
 
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod 0644 /etc/apt/keyrings/docker.asc

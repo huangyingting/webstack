@@ -71,7 +71,21 @@ variable "data_disk_size_gb" {
 
 variable "admin_username" {
   type    = string
-  default = "azureadmin"
+  default = "azadmin"
+  validation {
+    condition     = can(regex("^[a-z_][a-z0-9_-]{0,31}$", var.admin_username)) && var.admin_username != "root"
+    error_message = "Use a Linux username of 1-32 lowercase characters, digits, underscores, or hyphens; root is not allowed."
+  }
+}
+
+variable "ssh_port" {
+  type        = number
+  description = "TCP port used by OpenSSH and allowed from admin_cidr."
+  default     = 22222
+  validation {
+    condition     = var.ssh_port >= 1024 && var.ssh_port <= 65535 && floor(var.ssh_port) == var.ssh_port
+    error_message = "Use an unprivileged SSH port between 1024 and 65535."
+  }
 }
 
 variable "ssh_public_key_path" {

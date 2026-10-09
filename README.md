@@ -53,6 +53,15 @@ ssh_public_key = "ssh-ed25519 AAAAC3... admin@example.com"
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 ```
 
+默认 Linux 管理员为 `azadmin`。SSH 默认监听 `22222`，且仅允许 `admin_cidr` 访问。连接示例：
+
+```bash
+ssh -p 22222 azadmin@PUBLIC_IP
+```
+
+同一 NSG 同时关联到应用子网和 VM NIC；两层都仅开放公网 HTTP `80`、HTTPS `443`
+以及来自 `admin_cidr` 的 SSH `22222`，其他入站流量显式拒绝。
+
 默认 `data_disk_count = 4`、`data_disk_size_gb = 32`，总容量为 128GB。修改磁盘数量或缩小磁盘不是在线安全操作；已有数据时应新建阵列并迁移，而不是直接修改这些值。
 
 ```bash

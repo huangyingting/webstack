@@ -7,6 +7,9 @@ grep -q 'Path("/data/apps")' create-app.py
 grep -q "data_directory = '/data/postgresql/" bootstrap.sh
 grep -q '"data-root": "/data/docker"' bootstrap.sh
 grep -q 'RequiresMountsFor=/data' bootstrap.sh
+grep -q 'Port $ssh_port' bootstrap.sh
+grep -q 'systemctl restart ssh.service' bootstrap.sh
+grep -q 'useradd --create-home --shell /bin/bash --groups sudo' bootstrap.sh
 assert_rejected() {
     local expected=$1
     shift
