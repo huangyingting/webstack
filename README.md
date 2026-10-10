@@ -146,7 +146,7 @@ GitHub Action 也支持人工触发的数据库与应用生命周期操作：
 ```yaml
 jobs:
   deploy:
-    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@main
+    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@v1.0.0
     with:
       mode: deploy-webapp
       app_name: app_a
@@ -175,7 +175,7 @@ jobs:
 ```yaml
 jobs:
   deploy:
-    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@main
+    uses: OWNER/webstack/.github/workflows/webstack-deploy.yml@v1.0.0
     with:
       mode: deploy-webapp
       app_name: app_a
